@@ -1,0 +1,4 @@
+node_modules/
+AGENTS.md
+dist/
+src-tauri/target/

@@ -1,0 +1,238 @@
+.app-container {
+  background: transparent;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--window-border);
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  background: var(--sidebar-bg);
+  border-right: 0.5px solid var(--separator);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 128px;
+  min-width: 60px;
+  overflow: hidden;
+  position: relative;
+}
+
+.sidebar-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  padding: 14px 8px 6px 16px;
+  -webkit-app-region: drag;
+}
+
+.sidebar-logo {
+  border-radius: 8px;
+  flex: 0 0 auto;
+  height: 28px;
+  width: 28px;
+}
+
+.sidebar-brand {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  max-width: 86px;
+  opacity: 1;
+  overflow: hidden;
+  transition: opacity 0.18s ease, max-width 0.18s ease;
+  white-space: nowrap;
+}
+
+.sidebar.collapsed .sidebar-header {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsed .sidebar-brand {
+  max-width: 0;
+  opacity: 0;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 8px 0;
+}
+
+.sidebar-nav-item,
+.sidebar-footer-item {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: rgba(60, 60, 67, 0.72);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  height: 38px;
+  padding: 6px 10px;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  width: 100%;
+}
+
+.sidebar-nav-item:hover,
+.sidebar-footer-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(60, 60, 67, 0.9);
+}
+
+.sidebar-nav-item.active,
+.sidebar-footer-item.active {
+  color: var(--text-primary);
+}
+
+.sidebar-nav-item:active,
+.sidebar-footer-item:active {
+  transform: scale(0.98);
+}
+
+.sidebar-nav-icon,
+.sidebar-footer-icon {
+  align-items: center;
+  background: var(--card-bg);
+  border-radius: 8px;
+  display: flex;
+  flex: 0 0 auto;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.sidebar-nav-icon svg,
+.sidebar-footer-icon svg {
+  height: 16px;
+  stroke-width: 1.8;
+  width: 16px;
+}
+
+.sidebar-nav-item.active .sidebar-nav-icon,
+.sidebar-footer-item.active .sidebar-footer-icon {
+  background: var(--chip-hover-bg);
+}
+
+.sidebar-nav-label,
+.sidebar-footer-label {
+  font-size: 13px;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 0.18s ease, max-width 0.18s ease;
+  white-space: nowrap;
+}
+
+.sidebar.collapsed .sidebar-nav,
+.sidebar.collapsed .sidebar-footer {
+  align-items: center;
+}
+
+.sidebar.collapsed .sidebar-nav-item,
+.sidebar.collapsed .sidebar-footer-item {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsed .sidebar-nav-label,
+.sidebar.collapsed .sidebar-footer-label {
+  max-width: 0;
+  opacity: 0;
+}
+
+.sidebar-footer {
+  border-top: 0.5px solid var(--separator);
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+  padding: 8px 10px 10px;
+}
+
+.sidebar-resize-handle {
+  bottom: 0;
+  cursor: col-resize;
+  position: absolute;
+  right: -6px;
+  top: 0;
+  width: 12px;
+  z-index: 4;
+}
+
+.panel-area {
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.panel-window-header {
+  align-items: center;
+  border-bottom: 0.5px solid var(--separator);
+  display: flex;
+  height: var(--header-height);
+  justify-content: space-between;
+  padding: 0 14px;
+  -webkit-app-region: drag;
+}
+
+.panel-window-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  margin: 0;
+}
+
+.window-controls {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.window-minimize-btn,
+.window-close-btn {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.05);
+  border: 0;
+  border-radius: 50%;
+  color: rgba(60, 60, 67, 0.58);
+  cursor: pointer;
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.window-minimize-btn:hover {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--accent);
+}
+
+.window-close-btn:hover {
+  background: rgba(255, 59, 48, 0.12);
+  color: var(--danger);
+}
+
+.window-minimize-btn svg,
+.window-close-btn svg {
+  height: 14px;
+  width: 14px;
+}
+
+.panel-window-body {
+  animation: pageEnter 0.22s ease both;
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px 18px;
+}

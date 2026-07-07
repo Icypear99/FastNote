@@ -1,0 +1,132 @@
+.content-section {
+  display: grid;
+  gap: 8px;
+}
+
+.section-label {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding-left: 2px;
+}
+
+.list-panel,
+.settings-card,
+.form-panel {
+  background: var(--card-bg);
+  border: 0.5px solid rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.list-row,
+.setting-row {
+  align-items: center;
+  background: var(--card-bg);
+  border: 0;
+  border-bottom: 0.5px solid var(--separator);
+  color: var(--text-primary);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.list-row:last-child,
+.setting-row:last-child {
+  border-bottom: 0;
+}
+
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover,
+.note-item:hover,
+.conversation-item:hover {
+  background: var(--card-hover-bg);
+}
+
+.list-row small,
+.note-item small,
+.conversation-item small,
+.muted-row {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.dark-btn,
+.primary-btn {
+  background: #1c1c1e;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+  min-height: 32px;
+  padding: 0 14px;
+}
+
+.dark-btn:hover,
+.primary-btn:hover {
+  background: #2c2c2e;
+}
+
+.block-btn {
+  width: 100%;
+}
+
+.row-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.row-actions button {
+  background: var(--chip-bg);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.empty-state,
+.page-loading {
+  align-items: center;
+  color: var(--text-secondary);
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  min-height: 240px;
+}
+
+.empty-state strong {
+  color: var(--text-primary);
+}
+
+.priority-pill {
+  background: var(--chip-bg);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  padding: 3px 8px;
+}
+
+.priority-pill.p0 {
+  background: rgba(255, 59, 48, 0.11);
+  color: #c5302c;
+}
+
+.priority-pill.p1 {
+  background: rgba(255, 149, 0, 0.14);
+  color: #a86100;
+}
+
+.priority-pill.p2 {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
