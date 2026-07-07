@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --bg-primary: #f2f2f7;
   --body-bg: transparent;
   --window-bg: #f2f2f7;
@@ -22,6 +23,9 @@
   --warning: #ff9500;
   --input-bg: rgba(0, 0, 0, 0.04);
   --input-focus-bg: #ffffff;
+  --select-option-bg: var(--card-bg);
+  --select-option-hover-bg: var(--chip-hover-bg);
+  --select-option-selected-bg: var(--chip-hover-bg);
   --chip-bg: rgba(0, 0, 0, 0.05);
   --chip-hover-bg: rgba(0, 0, 0, 0.08);
   --control-bg: rgba(0, 0, 0, 0.05);
@@ -41,6 +45,7 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg-primary: #17181c;
   --body-bg: #17181c;
   --window-bg: #17181c;
@@ -71,6 +76,7 @@
 }
 
 :root[data-theme="deep-blue"] {
+  color-scheme: dark;
   --bg-primary: #0f172a;
   --body-bg: #0f172a;
   --window-bg: #0f172a;
@@ -101,6 +107,7 @@
 }
 
 :root[data-theme="transparent"] {
+  color-scheme: light;
   --bg-primary: rgba(244, 245, 249, 0.58);
   --body-bg: transparent;
   --window-bg: rgba(244, 245, 249, 0.62);
@@ -171,8 +178,32 @@ select {
 
 input,
 select {
+  color-scheme: light;
   min-height: 32px;
   padding: 0 12px;
+}
+
+:root[data-theme="dark"] select,
+:root[data-theme="deep-blue"] select {
+  color-scheme: dark;
+}
+
+select option {
+  background: var(--select-option-bg);
+  color: var(--text-primary);
+}
+
+select option:hover {
+  background: var(--select-option-hover-bg);
+}
+
+select option:checked {
+  background: var(--select-option-selected-bg);
+  color: var(--text-primary);
+}
+
+select option:disabled {
+  color: var(--text-tertiary);
 }
 
 textarea {

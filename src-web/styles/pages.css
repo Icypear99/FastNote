@@ -234,6 +234,39 @@
   padding: 0 10px;
 }
 
+.tool-toolbar {
+  background: var(--panel-bg);
+}
+
+.tool-toolbar select {
+  background: var(--input-bg);
+  color: var(--text-primary);
+  min-width: 132px;
+}
+
+.tool-toolbar select:focus {
+  background: var(--input-focus-bg);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.tool-toolbar .dark-btn {
+  background: var(--accent-strong);
+  color: var(--text-on-accent);
+  font-weight: 600;
+  min-width: 48px;
+}
+
+.tool-toolbar .dark-btn:hover,
+.tool-toolbar .dark-btn:focus-visible {
+  background: var(--accent-strong-hover);
+  color: var(--text-on-accent);
+}
+
+.tool-toolbar .dark-btn:active {
+  color: var(--text-on-accent);
+  transform: translateY(1px);
+}
+
 .note-editor textarea {
   background: var(--card-bg);
   border: 0;
@@ -250,11 +283,125 @@
   height: calc(100vh - var(--header-height) - 140px);
 }
 
-.tool-workspace textarea {
+.code-panel {
   background: var(--card-bg);
-  border: 0;
+  border: 0.5px solid var(--card-border);
   border-radius: var(--radius);
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.code-panel.has-error {
+  background: color-mix(in srgb, var(--danger) 11%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+.code-line-gutter {
+  background: var(--input-bg);
+  border-right: 0.5px solid var(--separator);
+  color: var(--text-tertiary);
   font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 22px;
+  overflow: hidden;
+  padding: 12px 8px 12px 0;
+  text-align: right;
+  user-select: none;
+}
+
+.code-line-gutter span {
+  display: block;
+  height: 22px;
+}
+
+.code-textarea,
+.code-output {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 22px;
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.code-textarea {
+  height: 100%;
+  resize: none;
+}
+
+.code-output {
+  user-select: text;
+}
+
+.code-placeholder {
+  color: var(--text-tertiary);
+}
+
+.json-token.json-key {
+  color: #8b5cf6;
+}
+
+.json-token.json-string {
+  color: #16a34a;
+}
+
+.json-token.json-number {
+  color: #2563eb;
+}
+
+.json-token.json-boolean {
+  color: #d97706;
+}
+
+.json-token.json-null {
+  color: var(--text-secondary);
+}
+
+.json-token.json-bracket {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.json-token.json-punctuation {
+  color: var(--text-secondary);
+}
+
+.json-error-text {
+  color: #dc2626;
+}
+
+:root[data-theme="dark"] .json-token.json-key,
+:root[data-theme="deep-blue"] .json-token.json-key {
+  color: #c4b5fd;
+}
+
+:root[data-theme="dark"] .json-token.json-string,
+:root[data-theme="deep-blue"] .json-token.json-string {
+  color: #86efac;
+}
+
+:root[data-theme="dark"] .json-token.json-number,
+:root[data-theme="deep-blue"] .json-token.json-number {
+  color: #93c5fd;
+}
+
+:root[data-theme="dark"] .json-token.json-boolean,
+:root[data-theme="deep-blue"] .json-token.json-boolean {
+  color: #fcd34d;
+}
+
+:root[data-theme="dark"] .json-error-text,
+:root[data-theme="deep-blue"] .json-error-text {
+  color: #fca5a5;
 }
 
 .chat-area {

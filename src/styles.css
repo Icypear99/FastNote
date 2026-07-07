@@ -96,6 +96,14 @@ textarea {
   font-size: var(--font-size-sm);
 }
 
+.brand-logo {
+  border-radius: var(--radius-sm);
+  display: block;
+  height: var(--spacing-6);
+  object-fit: cover;
+  width: var(--spacing-6);
+}
+
 .dashboard-grid,
 .quick-grid,
 .form-grid,

@@ -73,6 +73,20 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const applyWindowIcon = async () => {
+      try {
+        const response = await fetch('/logo.webp');
+        const iconBytes = new Uint8Array(await response.arrayBuffer());
+        await getCurrentWindow().setIcon(iconBytes);
+      } catch (err) {
+        console.warn('Failed to apply FastNote window icon', err);
+      }
+    };
+    void applyWindowIcon();
+  }, []);
+
+  useEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     if (!media) return;
     const update = () => setPrefersDark(media.matches);
