@@ -101,6 +101,7 @@ function CodeInput({
         }}
         placeholder={placeholder}
         spellCheck={false}
+        wrap="soft"
       />
     </div>
   );

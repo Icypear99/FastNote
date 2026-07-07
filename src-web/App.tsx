@@ -6,6 +6,7 @@ import {
   CheckSquare,
   FileText,
   Home,
+  Maximize2,
   Minus,
   Settings,
   UserRound,
@@ -158,6 +159,12 @@ export default function App() {
     await getCurrentWindow().minimize();
   };
 
+  const maximize = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!isTauriRuntime()) return;
+    await getCurrentWindow().toggleMaximize();
+  };
+
   const close = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (!isTauriRuntime()) return;
@@ -199,6 +206,9 @@ export default function App() {
           <div className="window-controls">
             <button className="window-minimize-btn" type="button" title="最小化" onClick={minimize}>
               <Minus />
+            </button>
+            <button className="window-maximize-btn" type="button" title="最大化" onClick={maximize}>
+              <Maximize2 />
             </button>
             <button className="window-close-btn" type="button" title="关闭" onClick={close}>
               <X />
