@@ -134,7 +134,7 @@ function WorkspaceTopNav({profile}: {profile: UserProfile}) {
   return (
     <TopNav
       label="个人空间顶部导航"
-      heading={<TopNavHeading heading="个人空间工作台" subheading="本地优先 · 免登录" logo={<Sparkles size={22} />} />}
+      heading={<TopNavHeading heading="FastNote" subheading="本地优先 · 免登录" logo={<Sparkles size={22} />} />}
       endContent={
         <section className="top-profile" aria-label="当前用户">
           <Avatar profile={profile} size="sm" />
@@ -157,7 +157,7 @@ function WorkspaceSideNav({
   const activeTasks = snapshot.tasks.filter((task) => !task.archivedAt && task.status !== 'done').length;
   return (
     <SideNav
-      header={<SideNavHeading heading="WorkSpace" subheading="个人效率中枢" icon={<Sparkles size={20} />} />}
+      header={<SideNavHeading heading="FastNote" subheading="个人效率中枢" icon={<Sparkles size={20} />} />}
       collapsible={{defaultIsCollapsed: false, buttonLabel: '折叠导航'}}
     >
       <SideNavSection title="工作区">

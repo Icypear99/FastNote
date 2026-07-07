@@ -10,7 +10,7 @@ import type {
   WorkspaceSnapshot,
 } from '../types';
 
-const STORAGE_KEY = 'personal-space-workbench:v1';
+const STORAGE_KEY = 'fastnote:v1';
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 
@@ -46,7 +46,7 @@ const defaultCards = (): DashboardCard[] => [
 const seedTasks = (): Task[] => [
   {
     id: id(),
-    title: '梳理个人空间工作台 MVP',
+    title: '梳理 FastNote MVP',
     description: '确认首页、待办、笔记、工具箱、AI 和个人资料的第一版闭环。',
     type: 'story',
     priority: 'P0',
@@ -76,7 +76,7 @@ const seedNotes = (): Note[] => [
   {
     id: id(),
     title: '工作台设计备忘',
-    content: '# 个人空间工作台\n\n- 本地免登录\n- 资料、待办、笔记、工具箱、AI 闭环\n- 所有删除语义都走归档',
+    content: '# FastNote\n\n- 本地免登录\n- 资料、待办、笔记、工具箱、AI 闭环\n- 所有删除语义都走归档',
     summary: '第一版采用本地优先桌面应用路线。',
     tags: ['设计', 'MVP'],
     status: 'draft',

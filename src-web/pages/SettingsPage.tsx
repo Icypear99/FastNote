@@ -6,16 +6,19 @@ export default function SettingsPage({
   profile,
   settings,
   run,
+  onThemePreview,
 }: {
   profile: UserProfile;
   settings: Settings;
   run: <T>(action: Promise<T>) => Promise<T>;
+  onThemePreview: (themeMode: Settings['themeMode'] | null) => void;
 }) {
   const [profileDraft, setProfileDraft] = useState(profile);
   const [settingsDraft, setSettingsDraft] = useState(settings);
 
   useEffect(() => setProfileDraft(profile), [profile]);
   useEffect(() => setSettingsDraft(settings), [settings]);
+  useEffect(() => () => onThemePreview(null), [onThemePreview]);
 
   const phoneError = profileDraft.phone && !/^1\d{10}$/.test(profileDraft.phone);
   const emailError = profileDraft.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profileDraft.email);
@@ -24,6 +27,15 @@ export default function SettingsPage({
     if (phoneError || emailError) return;
     await run(commands.updateProfile(profileDraft));
     await run(commands.updateSettings(settingsDraft));
+    onThemePreview(null);
+  };
+
+  const changeTheme = async (themeMode: Settings['themeMode']) => {
+    const nextSettings = {...settingsDraft, themeMode};
+    setSettingsDraft(nextSettings);
+    onThemePreview(themeMode);
+    await run(commands.updateSettings({themeMode}));
+    onThemePreview(null);
   };
 
   return (
@@ -51,9 +63,11 @@ export default function SettingsPage({
         <div className="section-label">基础设置</div>
         <div className="settings-card">
           <SettingRow label="主题">
-            <select value={settingsDraft.themeMode} onChange={(event) => setSettingsDraft({...settingsDraft, themeMode: event.target.value as Settings['themeMode']})}>
+            <select value={settingsDraft.themeMode} onChange={(event) => void changeTheme(event.target.value as Settings['themeMode'])}>
               <option value="light">浅色</option>
-              <option value="dark">深色</option>
+              <option value="dark">暗色</option>
+              <option value="deep-blue">深蓝</option>
+              <option value="transparent">透明</option>
               <option value="system">跟随系统</option>
             </select>
           </SettingRow>

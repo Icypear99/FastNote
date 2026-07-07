@@ -20,7 +20,7 @@ import AssistantPage from './pages/AssistantPage';
 import SettingsPage from './pages/SettingsPage';
 import {commands, isTauriRuntime} from './services/commands';
 import {useUiStore} from './stores/uiStore';
-import type {PanelKey, WorkspaceSnapshot} from './types';
+import type {PanelKey, ThemeMode, WorkspaceSnapshot} from './types';
 
 const panelMeta: Record<PanelKey, {title: string; icon: typeof Home}> = {
   dashboard: {title: '工作台', icon: Home},
@@ -32,10 +32,17 @@ const panelMeta: Record<PanelKey, {title: string; icon: typeof Home}> = {
 };
 
 const navItems: PanelKey[] = ['dashboard', 'tasks', 'notes', 'tools', 'assistant'];
+const themeModes: ThemeMode[] = ['light', 'dark', 'deep-blue', 'transparent', 'system'];
+
+function resolveTheme(themeMode: ThemeMode, prefersDark: boolean) {
+  return themeMode === 'system' ? (prefersDark ? 'dark' : 'light') : themeMode;
+}
 
 export default function App() {
   const {activePanel, setActivePanel} = useUiStore();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
+  const [themePreview, setThemePreview] = useState<ThemeMode | null>(null);
+  const [prefersDark, setPrefersDark] = useState(false);
   const [error, setError] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(60);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -64,6 +71,23 @@ export default function App() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return;
+    const update = () => setPrefersDark(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    const themeMode = themePreview ?? snapshot?.settings.themeMode ?? 'light';
+    const safeTheme = themeModes.includes(themeMode) ? themeMode : 'light';
+    const resolvedTheme = resolveTheme(safeTheme, prefersDark);
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.dataset.themeMode = safeTheme;
+  }, [prefersDark, snapshot?.settings.themeMode, themePreview]);
 
   useEffect(() => {
     const move = (event: MouseEvent) => {
@@ -102,7 +126,7 @@ export default function App() {
         />
       );
     }
-    return <SettingsPage profile={snapshot.profile} settings={snapshot.settings} run={run} />;
+    return <SettingsPage profile={snapshot.profile} settings={snapshot.settings} run={run} onThemePreview={setThemePreview} />;
   }, [activePanel, run, setActivePanel, snapshot]);
 
   const handleResizeMouseDown = (event: React.MouseEvent) => {
@@ -114,14 +138,16 @@ export default function App() {
     document.body.style.userSelect = 'none';
   };
 
-  const minimize = async () => {
+  const minimize = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     if (!isTauriRuntime()) return;
     await getCurrentWindow().minimize();
   };
 
-  const hide = async () => {
+  const close = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     if (!isTauriRuntime()) return;
-    await getCurrentWindow().hide();
+    await getCurrentWindow().close();
   };
 
   return (
@@ -133,8 +159,8 @@ export default function App() {
         data-tauri-drag-region
       >
         <div className="sidebar-header" data-tauri-drag-region>
-          <img className="sidebar-logo" src="/logo.svg" alt="workspace" />
-          <span className="sidebar-brand">WorkSpace</span>
+          <img className="sidebar-logo" src="/logo.webp" alt="FastNote" />
+          <span className="sidebar-brand">FastNote</span>
         </div>
 
         <nav className="sidebar-nav" aria-label="主导航">
@@ -151,15 +177,16 @@ export default function App() {
       </aside>
 
       <main className="panel-area">
-        <header className="panel-window-header" data-tauri-drag-region>
+        <header className="panel-window-header">
           <h1 className="panel-window-title" data-tauri-drag-region>
             {currentTitle}
           </h1>
+          <div className="panel-window-drag-fill" data-tauri-drag-region />
           <div className="window-controls">
             <button className="window-minimize-btn" type="button" title="最小化" onClick={minimize}>
               <Minus />
             </button>
-            <button className="window-close-btn" type="button" title="隐藏" onClick={hide}>
+            <button className="window-close-btn" type="button" title="关闭" onClick={close}>
               <X />
             </button>
           </div>

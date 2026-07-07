@@ -14,7 +14,7 @@
 .settings-card,
 .form-panel {
   background: var(--card-bg);
-  border: 0.5px solid rgba(0, 0, 0, 0.04);
+  border: 0.5px solid var(--card-border);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -60,10 +60,10 @@
 
 .dark-btn,
 .primary-btn {
-  background: #1c1c1e;
+  background: var(--accent-strong);
   border: 0;
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: var(--text-on-accent);
   cursor: pointer;
   min-height: 32px;
   padding: 0 14px;
@@ -71,7 +71,7 @@
 
 .dark-btn:hover,
 .primary-btn:hover {
-  background: #2c2c2e;
+  background: var(--accent-strong-hover);
 }
 
 .block-btn {
@@ -85,7 +85,7 @@
 }
 
 .row-actions button {
-  background: var(--chip-bg);
+  background: var(--control-bg);
   border: 0;
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -118,12 +118,12 @@
 
 .priority-pill.p0 {
   background: rgba(255, 59, 48, 0.11);
-  color: #c5302c;
+  color: var(--danger);
 }
 
 .priority-pill.p1 {
   background: rgba(255, 149, 0, 0.14);
-  color: #a86100;
+  color: var(--warning);
 }
 
 .priority-pill.p2 {

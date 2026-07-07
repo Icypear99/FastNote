@@ -1,4 +1,5 @@
 export type PanelKey = 'dashboard' | 'tasks' | 'notes' | 'tools' | 'assistant' | 'settings';
+export type ThemeMode = 'system' | 'light' | 'dark' | 'deep-blue' | 'transparent';
 
 export type TaskType = 'personal' | 'epic' | 'story' | 'task' | 'bug';
 export type TaskPriority = 'P0' | 'P1' | 'P2' | 'P3';
@@ -76,7 +77,7 @@ export interface Settings {
   aiBaseUrl: string;
   aiModel: string;
   aiApiKey: string;
-  themeMode: 'system' | 'light' | 'dark';
+  themeMode: ThemeMode;
 }
 
 export interface WorkspaceSnapshot {

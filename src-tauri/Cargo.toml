@@ -1,7 +1,7 @@
 [package]
-name = "personal-space-workbench"
+name = "fastnote"
 version = "0.1.0"
-description = "Local-first personal workspace desktop app"
+description = "Local-first FastNote desktop app"
 authors = ["Codex"]
 edition = "2021"
 

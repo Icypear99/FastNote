@@ -10,7 +10,7 @@ import type {
   WorkspaceSnapshot,
 } from '../types';
 
-const STORAGE_KEY = 'personal-space-workbench:v2';
+const STORAGE_KEY = 'fastnote:v2';
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 
