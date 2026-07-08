@@ -2,9 +2,9 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {
   Bot,
+  BookOpenText,
   BriefcaseBusiness,
-  CheckSquare,
-  FileText,
+  CalendarDays,
   Home,
   Maximize2,
   Minus,
@@ -13,30 +13,41 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import DashboardPage from './pages/DashboardPage';
-import TasksPage from './pages/TasksPage';
-import NotesPage from './pages/NotesPage';
-import ToolsPage from './pages/ToolsPage';
-import AssistantPage from './pages/AssistantPage';
-import SettingsPage from './pages/SettingsPage';
-import {commands, isTauriRuntime} from './services/commands';
+import DashboardPage from '../features/dashboard/DashboardPage';
+import TasksPage from '../features/tasks/TasksPage';
+import EssaysPage from '../features/essays/EssaysPage';
+import ToolsPage from '../features/tools/ToolsPage';
+import AssistantPage from '../features/assistant/AssistantPage';
+import SettingsPage from '../features/settings/SettingsPage';
+import {commands, isTauriRuntime} from '../core/services/commands';
 import {useUiStore} from './stores/uiStore';
-import type {PanelKey, ThemeMode, WorkspaceSnapshot} from './types';
+import type {PanelKey, ThemeMode, WorkspaceSnapshot} from '../shared/types';
 
 const panelMeta: Record<PanelKey, {title: string; icon: typeof Home}> = {
   dashboard: {title: '工作台', icon: Home},
-  tasks: {title: '待办', icon: CheckSquare},
-  notes: {title: '笔记', icon: FileText},
+  tasks: {title: '项目任务', icon: BriefcaseBusiness},
+  essays: {title: '随笔', icon: BookOpenText},
   tools: {title: '工具', icon: Wrench},
   assistant: {title: '助手', icon: Bot},
   settings: {title: '设置', icon: Settings},
 };
 
-const navItems: PanelKey[] = ['dashboard', 'tasks', 'notes', 'tools', 'assistant'];
+const navItems: PanelKey[] = ['dashboard', 'tasks', 'essays', 'tools', 'assistant'];
 const themeModes: ThemeMode[] = ['light', 'dark', 'deep-blue', 'transparent', 'system'];
 
 function resolveTheme(themeMode: ThemeMode, prefersDark: boolean) {
   return themeMode === 'system' ? (prefersDark ? 'dark' : 'light') : themeMode;
+}
+
+function formatDateTime(date: Date) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
 export default function App() {
@@ -45,7 +56,7 @@ export default function App() {
   const [themePreview, setThemePreview] = useState<ThemeMode | null>(null);
   const [prefersDark, setPrefersDark] = useState(false);
   const [error, setError] = useState('');
-  const [sidebarWidth, setSidebarWidth] = useState(60);
+  const [sidebarWidth, setSidebarWidth] = useState(232);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
@@ -107,7 +118,7 @@ export default function App() {
   useEffect(() => {
     const move = (event: MouseEvent) => {
       if (!isDragging.current) return;
-      const nextWidth = Math.min(128, Math.max(60, dragStartWidth.current + event.clientX - dragStartX.current));
+      const nextWidth = Math.min(280, Math.max(72, dragStartWidth.current + event.clientX - dragStartX.current));
       setSidebarWidth(nextWidth);
     };
     const up = () => {
@@ -123,13 +134,15 @@ export default function App() {
     };
   }, []);
 
-  const isCollapsed = sidebarWidth <= 82;
+  const isCollapsed = sidebarWidth <= 96;
   const currentTitle = panelMeta[activePanel].title;
   const panel = useMemo(() => {
     if (!snapshot) return null;
     if (activePanel === 'dashboard') return <DashboardPage snapshot={snapshot} onNavigate={setActivePanel} />;
-    if (activePanel === 'tasks') return <TasksPage tasks={snapshot.tasks} run={run} />;
-    if (activePanel === 'notes') return <NotesPage notes={snapshot.notes} run={run} />;
+    if (activePanel === 'tasks') return <TasksPage projects={snapshot.projects} tasks={snapshot.tasks} run={run} />;
+    if (activePanel === 'essays') {
+      return <EssaysPage essays={snapshot.essays} categories={snapshot.essayCategories} run={run} />;
+    }
     if (activePanel === 'tools') return <ToolsPage />;
     if (activePanel === 'assistant') {
       return (
@@ -199,10 +212,16 @@ export default function App() {
 
       <main className="panel-area">
         <header className="panel-window-header">
-          <h1 className="panel-window-title" data-tauri-drag-region>
-            {currentTitle}
-          </h1>
+          <div className="topbar-heading" data-tauri-drag-region>
+            <span className="topbar-kicker">FastNote</span>
+            <h1 className="panel-window-title">{currentTitle}</h1>
+          </div>
+          <label className="global-search" aria-label="全局搜索">
+            <span>搜索</span>
+            <input placeholder="任务、项目、随笔" />
+          </label>
           <div className="panel-window-drag-fill" data-tauri-drag-region />
+          <TopbarClock />
           <div className="window-controls">
             <button className="window-minimize-btn" type="button" title="最小化" onClick={minimize}>
               <Minus />
@@ -229,6 +248,22 @@ export default function App() {
           )}
         </section>
       </main>
+    </div>
+  );
+}
+
+function TopbarClock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="topbar-clock" aria-label="当前日期时间">
+      <CalendarDays />
+      <span>{formatDateTime(now)}</span>
     </div>
   );
 }

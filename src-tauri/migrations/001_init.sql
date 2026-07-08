@@ -20,10 +20,20 @@ CREATE TABLE IF NOT EXISTS tasks (
   type TEXT NOT NULL DEFAULT 'personal',
   priority TEXT NOT NULL DEFAULT 'P2',
   status TEXT NOT NULL DEFAULT 'todo',
+  project_id TEXT,
   labels TEXT NOT NULL DEFAULT '[]',
   due_date TEXT NOT NULL DEFAULT '',
   parent_id TEXT,
   order_num INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL,
   archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -34,8 +44,19 @@ CREATE TABLE IF NOT EXISTS notes (
   title TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
   summary TEXT NOT NULL DEFAULT '',
+  category_id TEXT,
   tags TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'draft',
+  archived_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS essay_categories (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL,
+  order_num INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

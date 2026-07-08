@@ -1,7 +1,7 @@
 import {useState} from 'react';
-import type {AiConversation, AiMessage, Settings} from '../types';
-import {commands} from '../services/commands';
-import {useUiStore} from '../stores/uiStore';
+import type {AiConversation, AiMessage, Settings} from '../../shared/types';
+import {commands} from '../../core/services/commands';
+import {useUiStore} from '../../app/stores/uiStore';
 
 export default function AssistantPage({
   conversations,

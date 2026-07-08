@@ -1,20 +1,20 @@
 import {create} from 'zustand';
-import type {PanelKey} from '../types';
+import type {PanelKey} from '../../shared/types';
 
 interface UiState {
   activePanel: PanelKey;
-  selectedNoteId?: string;
+  selectedEssayId?: string;
   selectedConversationId?: string;
   setActivePanel: (panel: PanelKey) => void;
-  setSelectedNoteId: (id?: string) => void;
+  setSelectedEssayId: (id?: string) => void;
   setSelectedConversationId: (id?: string) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
   activePanel: 'dashboard',
-  selectedNoteId: undefined,
+  selectedEssayId: undefined,
   selectedConversationId: undefined,
   setActivePanel: (activePanel) => set({activePanel}),
-  setSelectedNoteId: (selectedNoteId) => set({selectedNoteId}),
+  setSelectedEssayId: (selectedEssayId) => set({selectedEssayId}),
   setSelectedConversationId: (selectedConversationId) => set({selectedConversationId}),
 }));

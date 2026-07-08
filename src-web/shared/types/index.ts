@@ -1,4 +1,4 @@
-export type PanelKey = 'dashboard' | 'tasks' | 'notes' | 'tools' | 'assistant' | 'settings';
+export type PanelKey = 'dashboard' | 'tasks' | 'essays' | 'tools' | 'assistant' | 'settings';
 export type ThemeMode = 'system' | 'light' | 'dark' | 'deep-blue' | 'transparent';
 
 export type TaskType = 'personal' | 'epic' | 'story' | 'task' | 'bug';
@@ -20,6 +20,15 @@ export interface UserProfile {
   updatedAt: string;
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  color: string;
+  archivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -27,6 +36,7 @@ export interface Task {
   type: TaskType;
   priority: TaskPriority;
   status: TaskStatus;
+  projectId?: string;
   labels: string[];
   dueDate: string;
   parentId?: string;
@@ -36,11 +46,22 @@ export interface Task {
   updatedAt: string;
 }
 
-export interface Note {
+export interface EssayCategory {
+  id: string;
+  name: string;
+  color: string;
+  orderNum: number;
+  archivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Essay {
   id: string;
   title: string;
   content: string;
   summary: string;
+  categoryId?: string;
   tags: string[];
   status: 'draft' | 'published';
   archivedAt?: string;
@@ -82,8 +103,10 @@ export interface Settings {
 
 export interface WorkspaceSnapshot {
   profile: UserProfile;
+  projects: Project[];
   tasks: Task[];
-  notes: Note[];
+  essays: Essay[];
+  essayCategories: EssayCategory[];
   conversations: AiConversation[];
   messages: AiMessage[];
   dashboardCards: DashboardCard[];

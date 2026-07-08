@@ -4,6 +4,7 @@
   --body-bg: transparent;
   --window-bg: #f2f2f7;
   --sidebar-bg: #e8e8ed;
+  --topbar-bg: rgba(255, 255, 255, 0.78);
   --panel-bg: #f2f2f7;
   --card-bg: #ffffff;
   --card-hover-bg: #f8f8fb;
@@ -50,6 +51,7 @@
   --body-bg: #17181c;
   --window-bg: #17181c;
   --sidebar-bg: #202126;
+  --topbar-bg: rgba(32, 33, 38, 0.9);
   --panel-bg: #17181c;
   --card-bg: #24262d;
   --card-hover-bg: #2b2d35;
@@ -81,6 +83,7 @@
   --body-bg: #0f172a;
   --window-bg: #0f172a;
   --sidebar-bg: #111c33;
+  --topbar-bg: rgba(17, 28, 51, 0.9);
   --panel-bg: #0f172a;
   --card-bg: #17233b;
   --card-hover-bg: #1d2d4a;
@@ -112,6 +115,7 @@
   --body-bg: transparent;
   --window-bg: rgba(244, 245, 249, 0.62);
   --sidebar-bg: rgba(231, 232, 238, 0.62);
+  --topbar-bg: rgba(255, 255, 255, 0.5);
   --panel-bg: rgba(244, 245, 249, 0.5);
   --card-bg: rgba(255, 255, 255, 0.72);
   --card-hover-bg: rgba(255, 255, 255, 0.86);

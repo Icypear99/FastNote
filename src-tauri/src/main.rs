@@ -10,6 +10,9 @@ use serde_json::json;
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
+const DEFAULT_PROJECT_ID: &str = "default-project";
+const DEFAULT_CATEGORY_ID: &str = "default-essay-category";
+
 struct AppState {
     db_path: PathBuf,
 }
@@ -33,6 +36,17 @@ struct UserProfile {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct Project {
+    id: String,
+    name: String,
+    color: String,
+    archived_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct Task {
     id: String,
     title: String,
@@ -41,6 +55,7 @@ struct Task {
     task_type: String,
     priority: String,
     status: String,
+    project_id: Option<String>,
     labels: Vec<String>,
     due_date: String,
     parent_id: Option<String>,
@@ -52,11 +67,24 @@ struct Task {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct Note {
+struct EssayCategory {
+    id: String,
+    name: String,
+    color: String,
+    order_num: i64,
+    archived_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Essay {
     id: String,
     title: String,
     content: String,
     summary: String,
+    category_id: Option<String>,
     tags: Vec<String>,
     status: String,
     archived_at: Option<String>,
@@ -108,8 +136,10 @@ struct Settings {
 #[serde(rename_all = "camelCase")]
 struct WorkspaceSnapshot {
     profile: UserProfile,
+    projects: Vec<Project>,
     tasks: Vec<Task>,
-    notes: Vec<Note>,
+    essays: Vec<Essay>,
+    essay_categories: Vec<EssayCategory>,
     conversations: Vec<AiConversation>,
     messages: Vec<AiMessage>,
     dashboard_cards: Vec<DashboardCard>,
@@ -129,6 +159,15 @@ struct ProfilePatch {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectPatch {
+    id: Option<String>,
+    name: Option<String>,
+    color: Option<String>,
+    archived_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TaskPatch {
     id: Option<String>,
     title: Option<String>,
@@ -137,6 +176,7 @@ struct TaskPatch {
     task_type: Option<String>,
     priority: Option<String>,
     status: Option<String>,
+    project_id: Option<String>,
     labels: Option<Vec<String>>,
     due_date: Option<String>,
     parent_id: Option<String>,
@@ -145,11 +185,22 @@ struct TaskPatch {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NotePatch {
+struct EssayCategoryPatch {
+    id: Option<String>,
+    name: Option<String>,
+    color: Option<String>,
+    order_num: Option<i64>,
+    archived_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EssayPatch {
     id: Option<String>,
     title: Option<String>,
     content: Option<String>,
     summary: Option<String>,
+    category_id: Option<String>,
     tags: Option<Vec<String>>,
     status: Option<String>,
     archived_at: Option<String>,
@@ -188,7 +239,59 @@ fn init_db(db_path: &PathBuf) -> Result<(), String> {
     let conn = Connection::open(db_path).map_err(|error| error.to_string())?;
     conn.execute_batch(include_str!("../migrations/001_init.sql"))
         .map_err(|error| error.to_string())?;
+    ensure_schema(&conn)?;
     seed_defaults(&conn)
+}
+
+fn ensure_schema(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            color TEXT NOT NULL,
+            archived_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS essay_categories (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            color TEXT NOT NULL,
+            order_num INTEGER NOT NULL DEFAULT 0,
+            archived_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|error| error.to_string())?;
+    ensure_column(conn, "tasks", "project_id", "TEXT")?;
+    ensure_column(conn, "notes", "category_id", "TEXT")?;
+    Ok(())
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+    if !column_exists(conn, table, column)? {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| error.to_string())?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(columns.iter().any(|item| item == column))
 }
 
 fn seed_defaults(conn: &Connection) -> Result<(), String> {
@@ -198,6 +301,20 @@ fn seed_defaults(conn: &Connection) -> Result<(), String> {
         (id, local_user_key, nickname, avatar_url, phone, email, phone_bound, email_bound, login_provider, created_at, updated_at)
         VALUES (?1, ?2, '劲草哥', '', '', '', 0, 0, 'local', ?3, ?3)",
         params![new_id(), new_id(), timestamp],
+    )
+    .map_err(|error| error.to_string())?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO projects (id, name, color, created_at, updated_at)
+        VALUES (?1, '日常工作', '#2563eb', ?2, ?2)",
+        params![DEFAULT_PROJECT_ID, timestamp],
+    )
+    .map_err(|error| error.to_string())?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO essay_categories (id, name, color, order_num, created_at, updated_at)
+        VALUES (?1, '未分类', '#64748b', 1, ?2, ?2)",
+        params![DEFAULT_CATEGORY_ID, timestamp],
     )
     .map_err(|error| error.to_string())?;
 
@@ -220,7 +337,7 @@ fn seed_defaults(conn: &Connection) -> Result<(), String> {
         .query_row("SELECT COUNT(*) FROM dashboard_cards", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if card_count == 0 {
-        for (index, card_type) in ["todo-overview", "today-focus", "recent-notes", "quick-tools"]
+        for (index, card_type) in ["todo-overview", "today-focus", "recent-essays", "quick-tools"]
             .iter()
             .enumerate()
         {
@@ -240,8 +357,10 @@ fn workspace_snapshot(state: State<AppState>) -> Result<WorkspaceSnapshot, Strin
     let conn = open_db(&state)?;
     Ok(WorkspaceSnapshot {
         profile: read_profile(&conn)?,
+        projects: read_projects(&conn)?,
         tasks: read_tasks(&conn)?,
-        notes: read_notes(&conn)?,
+        essays: read_essays(&conn)?,
+        essay_categories: read_essay_categories(&conn)?,
         conversations: read_conversations(&conn)?,
         messages: read_messages(&conn)?,
         dashboard_cards: read_dashboard_cards(&conn)?,
@@ -291,6 +410,57 @@ fn profile_update(state: State<AppState>, profile: ProfilePatch) -> Result<UserP
 }
 
 #[tauri::command]
+fn project_create(state: State<AppState>, project: ProjectPatch) -> Result<Project, String> {
+    let conn = open_db(&state)?;
+    let id = new_id();
+    let timestamp = now();
+    conn.execute(
+        "INSERT INTO projects (id, name, color, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![
+            id,
+            project.name.unwrap_or_else(|| "新项目".to_string()),
+            project.color.unwrap_or_else(|| "#2563eb".to_string()),
+            timestamp
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    read_project(&conn, &id)
+}
+
+#[tauri::command]
+fn project_update(state: State<AppState>, project: ProjectPatch) -> Result<Project, String> {
+    let conn = open_db(&state)?;
+    let id = project.id.ok_or_else(|| "项目 id 不能为空".to_string())?;
+    let current = read_project(&conn, &id)?;
+    conn.execute(
+        "UPDATE projects SET name = ?1, color = ?2, archived_at = ?3, updated_at = ?4 WHERE id = ?5",
+        params![
+            project.name.unwrap_or(current.name),
+            project.color.unwrap_or(current.color),
+            project.archived_at.or(current.archived_at),
+            now(),
+            id
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    read_project(&conn, &id)
+}
+
+#[tauri::command]
+fn project_archive(state: State<AppState>, id: String) -> Result<Project, String> {
+    project_update(
+        state,
+        ProjectPatch {
+            id: Some(id),
+            name: None,
+            color: None,
+            archived_at: Some(now()),
+        },
+    )
+}
+
+#[tauri::command]
 fn task_create(state: State<AppState>, task: TaskPatch) -> Result<Task, String> {
     let conn = open_db(&state)?;
     let timestamp = now();
@@ -301,8 +471,8 @@ fn task_create(state: State<AppState>, task: TaskPatch) -> Result<Task, String> 
         .map_err(|error| error.to_string())?;
     conn.execute(
         "INSERT INTO tasks
-        (id, title, description, type, priority, status, labels, due_date, parent_id, order_num, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+        (id, title, description, type, priority, status, project_id, labels, due_date, parent_id, order_num, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
         params![
             id,
             task.title.unwrap_or_else(|| "未命名任务".to_string()),
@@ -310,6 +480,7 @@ fn task_create(state: State<AppState>, task: TaskPatch) -> Result<Task, String> 
             task.task_type.unwrap_or_else(|| "personal".to_string()),
             task.priority.unwrap_or_else(|| "P2".to_string()),
             task.status.unwrap_or_else(|| "todo".to_string()),
+            empty_to_none(task.project_id),
             labels,
             task.due_date.unwrap_or_default(),
             task.parent_id,
@@ -327,16 +498,22 @@ fn task_update(state: State<AppState>, task: TaskPatch) -> Result<Task, String> 
     let id = task.id.ok_or_else(|| "任务 id 不能为空".to_string())?;
     let current = read_task(&conn, &id)?;
     let labels = serde_json::to_string(&task.labels.unwrap_or(current.labels)).map_err(|error| error.to_string())?;
+    let next_project_id = match task.project_id {
+        Some(value) if value.trim().is_empty() => None,
+        Some(value) => Some(value.trim().to_string()),
+        None => current.project_id,
+    };
     conn.execute(
         "UPDATE tasks SET title = ?1, description = ?2, type = ?3, priority = ?4, status = ?5,
-        labels = ?6, due_date = ?7, parent_id = ?8, archived_at = ?9, updated_at = ?10
-        WHERE id = ?11",
+        project_id = ?6, labels = ?7, due_date = ?8, parent_id = ?9, archived_at = ?10, updated_at = ?11
+        WHERE id = ?12",
         params![
             task.title.unwrap_or(current.title),
             task.description.unwrap_or(current.description),
             task.task_type.unwrap_or(current.task_type),
             task.priority.unwrap_or(current.priority),
             task.status.unwrap_or(current.status),
+            next_project_id,
             labels,
             task.due_date.unwrap_or(current.due_date),
             task.parent_id.or(current.parent_id),
@@ -360,6 +537,7 @@ fn task_move(state: State<AppState>, id: String, status: String) -> Result<Task,
             description: None,
             task_type: None,
             priority: None,
+            project_id: None,
             labels: None,
             due_date: None,
             parent_id: None,
@@ -380,6 +558,7 @@ fn task_archive(state: State<AppState>, id: String) -> Result<Task, String> {
             task_type: None,
             priority: None,
             status: None,
+            project_id: None,
             labels: None,
             due_date: None,
             parent_id: None,
@@ -388,62 +567,128 @@ fn task_archive(state: State<AppState>, id: String) -> Result<Task, String> {
 }
 
 #[tauri::command]
-fn note_create(state: State<AppState>, note: NotePatch) -> Result<Note, String> {
+fn essay_category_create(state: State<AppState>, category: EssayCategoryPatch) -> Result<EssayCategory, String> {
     let conn = open_db(&state)?;
-    let timestamp = now();
     let id = new_id();
-    let tags = serde_json::to_string(&note.tags.unwrap_or_default()).map_err(|error| error.to_string())?;
+    let timestamp = now();
+    let order_num: i64 = conn
+        .query_row("SELECT COALESCE(MAX(order_num), 0) + 1 FROM essay_categories", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
     conn.execute(
-        "INSERT INTO notes (id, title, content, summary, tags, status, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        "INSERT INTO essay_categories (id, name, color, order_num, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
         params![
             id,
-            note.title.unwrap_or_else(|| "未命名笔记".to_string()),
-            note.content.unwrap_or_default(),
-            note.summary.unwrap_or_default(),
-            tags,
-            note.status.unwrap_or_else(|| "draft".to_string()),
+            category.name.unwrap_or_else(|| "新分类".to_string()),
+            category.color.unwrap_or_else(|| "#64748b".to_string()),
+            category.order_num.unwrap_or(order_num),
             timestamp
         ],
     )
     .map_err(|error| error.to_string())?;
-    read_note(&conn, &id)
+    read_essay_category(&conn, &id)
 }
 
 #[tauri::command]
-fn note_update(state: State<AppState>, note: NotePatch) -> Result<Note, String> {
+fn essay_category_update(state: State<AppState>, category: EssayCategoryPatch) -> Result<EssayCategory, String> {
     let conn = open_db(&state)?;
-    let id = note.id.ok_or_else(|| "笔记 id 不能为空".to_string())?;
-    let current = read_note(&conn, &id)?;
-    let tags = serde_json::to_string(&note.tags.unwrap_or(current.tags)).map_err(|error| error.to_string())?;
+    let id = category.id.ok_or_else(|| "随笔分类 id 不能为空".to_string())?;
+    let current = read_essay_category(&conn, &id)?;
     conn.execute(
-        "UPDATE notes SET title = ?1, content = ?2, summary = ?3, tags = ?4,
-        status = ?5, archived_at = ?6, updated_at = ?7 WHERE id = ?8",
+        "UPDATE essay_categories SET name = ?1, color = ?2, order_num = ?3, archived_at = ?4, updated_at = ?5
+        WHERE id = ?6",
         params![
-            note.title.unwrap_or(current.title),
-            note.content.unwrap_or(current.content),
-            note.summary.unwrap_or(current.summary),
-            tags,
-            note.status.unwrap_or(current.status),
-            note.archived_at.or(current.archived_at),
+            category.name.unwrap_or(current.name),
+            category.color.unwrap_or(current.color),
+            category.order_num.unwrap_or(current.order_num),
+            category.archived_at.or(current.archived_at),
             now(),
             id
         ],
     )
     .map_err(|error| error.to_string())?;
-    read_note(&conn, &id)
+    read_essay_category(&conn, &id)
 }
 
 #[tauri::command]
-fn note_archive(state: State<AppState>, id: String) -> Result<Note, String> {
-    note_update(
+fn essay_category_archive(state: State<AppState>, id: String) -> Result<EssayCategory, String> {
+    essay_category_update(
         state,
-        NotePatch {
+        EssayCategoryPatch {
+            id: Some(id),
+            name: None,
+            color: None,
+            order_num: None,
+            archived_at: Some(now()),
+        },
+    )
+}
+
+#[tauri::command]
+fn essay_create(state: State<AppState>, essay: EssayPatch) -> Result<Essay, String> {
+    let conn = open_db(&state)?;
+    let timestamp = now();
+    let id = new_id();
+    let tags = serde_json::to_string(&essay.tags.unwrap_or_default()).map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO notes (id, title, content, summary, category_id, tags, status, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        params![
+            id,
+            essay.title.unwrap_or_else(|| "新的随笔".to_string()),
+            essay.content.unwrap_or_default(),
+            essay.summary.unwrap_or_default(),
+            empty_to_none(essay.category_id).unwrap_or_else(|| DEFAULT_CATEGORY_ID.to_string()),
+            tags,
+            essay.status.unwrap_or_else(|| "draft".to_string()),
+            timestamp
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    read_essay(&conn, &id)
+}
+
+#[tauri::command]
+fn essay_update(state: State<AppState>, essay: EssayPatch) -> Result<Essay, String> {
+    let conn = open_db(&state)?;
+    let id = essay.id.ok_or_else(|| "随笔 id 不能为空".to_string())?;
+    let current = read_essay(&conn, &id)?;
+    let tags = serde_json::to_string(&essay.tags.unwrap_or(current.tags)).map_err(|error| error.to_string())?;
+    let next_category_id = match essay.category_id {
+        Some(value) if value.trim().is_empty() => None,
+        Some(value) => Some(value.trim().to_string()),
+        None => current.category_id,
+    };
+    conn.execute(
+        "UPDATE notes SET title = ?1, content = ?2, summary = ?3, category_id = ?4, tags = ?5,
+        status = ?6, archived_at = ?7, updated_at = ?8 WHERE id = ?9",
+        params![
+            essay.title.unwrap_or(current.title),
+            essay.content.unwrap_or(current.content),
+            essay.summary.unwrap_or(current.summary),
+            next_category_id,
+            tags,
+            essay.status.unwrap_or(current.status),
+            essay.archived_at.or(current.archived_at),
+            now(),
+            id
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    read_essay(&conn, &id)
+}
+
+#[tauri::command]
+fn essay_archive(state: State<AppState>, id: String) -> Result<Essay, String> {
+    essay_update(
+        state,
+        EssayPatch {
             id: Some(id),
             archived_at: Some(now()),
             title: None,
             content: None,
             summary: None,
+            category_id: None,
             tags: None,
             status: None,
         },
@@ -602,9 +847,41 @@ fn read_profile(conn: &Connection) -> Result<UserProfile, String> {
     .map_err(|error| error.to_string())
 }
 
+fn read_project(conn: &Connection, id: &str) -> Result<Project, String> {
+    conn.query_row(
+        "SELECT id, name, color, archived_at, created_at, updated_at FROM projects WHERE id = ?1",
+        params![id],
+        map_project,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn read_projects(conn: &Connection) -> Result<Vec<Project>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, name, color, archived_at, created_at, updated_at FROM projects ORDER BY updated_at DESC")
+        .map_err(|error| error.to_string())?;
+    let projects = stmt
+        .query_map([], map_project)
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(projects)
+}
+
+fn map_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
+    Ok(Project {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        archived_at: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
 fn read_task(conn: &Connection, id: &str) -> Result<Task, String> {
     conn.query_row(
-        "SELECT id, title, description, type, priority, status, labels, due_date,
+        "SELECT id, title, description, type, priority, status, project_id, labels, due_date,
         parent_id, order_num, archived_at, created_at, updated_at FROM tasks WHERE id = ?1",
         params![id],
         map_task,
@@ -615,7 +892,7 @@ fn read_task(conn: &Connection, id: &str) -> Result<Task, String> {
 fn read_tasks(conn: &Connection) -> Result<Vec<Task>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, title, description, type, priority, status, labels, due_date,
+            "SELECT id, title, description, type, priority, status, project_id, labels, due_date,
             parent_id, order_num, archived_at, created_at, updated_at FROM tasks ORDER BY order_num ASC, updated_at DESC",
         )
         .map_err(|error| error.to_string())?;
@@ -628,7 +905,7 @@ fn read_tasks(conn: &Connection) -> Result<Vec<Task>, String> {
 }
 
 fn map_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
-    let labels: String = row.get(6)?;
+    let labels: String = row.get(7)?;
     Ok(Task {
         id: row.get(0)?,
         title: row.get(1)?,
@@ -636,49 +913,85 @@ fn map_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
         task_type: row.get(3)?,
         priority: row.get(4)?,
         status: row.get(5)?,
+        project_id: row.get(6)?,
         labels: serde_json::from_str(&labels).unwrap_or_default(),
-        due_date: row.get(7)?,
-        parent_id: row.get(8)?,
-        order_num: row.get(9)?,
-        archived_at: row.get(10)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
+        due_date: row.get(8)?,
+        parent_id: row.get(9)?,
+        order_num: row.get(10)?,
+        archived_at: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
-fn read_note(conn: &Connection, id: &str) -> Result<Note, String> {
+fn read_essay_category(conn: &Connection, id: &str) -> Result<EssayCategory, String> {
     conn.query_row(
-        "SELECT id, title, content, summary, tags, status, archived_at, created_at, updated_at FROM notes WHERE id = ?1",
+        "SELECT id, name, color, order_num, archived_at, created_at, updated_at FROM essay_categories WHERE id = ?1",
         params![id],
-        map_note,
+        map_essay_category,
     )
     .map_err(|error| error.to_string())
 }
 
-fn read_notes(conn: &Connection) -> Result<Vec<Note>, String> {
+fn read_essay_categories(conn: &Connection) -> Result<Vec<EssayCategory>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, title, content, summary, tags, status, archived_at, created_at, updated_at FROM notes ORDER BY updated_at DESC")
+        .prepare("SELECT id, name, color, order_num, archived_at, created_at, updated_at FROM essay_categories ORDER BY order_num ASC, updated_at DESC")
         .map_err(|error| error.to_string())?;
-    let notes = stmt
-        .query_map([], map_note)
+    let categories = stmt
+        .query_map([], map_essay_category)
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
-    Ok(notes)
+    Ok(categories)
 }
 
-fn map_note(row: &rusqlite::Row) -> rusqlite::Result<Note> {
-    let tags: String = row.get(4)?;
-    Ok(Note {
+fn map_essay_category(row: &rusqlite::Row) -> rusqlite::Result<EssayCategory> {
+    Ok(EssayCategory {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        order_num: row.get(3)?,
+        archived_at: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+fn read_essay(conn: &Connection, id: &str) -> Result<Essay, String> {
+    conn.query_row(
+        "SELECT id, title, content, summary, category_id, tags, status, archived_at, created_at, updated_at FROM notes WHERE id = ?1",
+        params![id],
+        map_essay,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn read_essays(conn: &Connection) -> Result<Vec<Essay>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, title, content, summary, category_id, tags, status, archived_at, created_at, updated_at FROM notes ORDER BY updated_at DESC")
+        .map_err(|error| error.to_string())?;
+    let essays = stmt
+        .query_map([], map_essay)
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(essays)
+}
+
+fn map_essay(row: &rusqlite::Row) -> rusqlite::Result<Essay> {
+    let tags: String = row.get(5)?;
+    let category_id: Option<String> = row.get(4)?;
+    Ok(Essay {
         id: row.get(0)?,
         title: row.get(1)?,
         content: row.get(2)?,
         summary: row.get(3)?,
+        category_id: category_id.or_else(|| Some(DEFAULT_CATEGORY_ID.to_string())),
         tags: serde_json::from_str(&tags).unwrap_or_default(),
-        status: row.get(5)?,
-        archived_at: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        status: row.get(6)?,
+        archived_at: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -798,6 +1111,17 @@ fn read_settings(conn: &Connection) -> Result<Settings, String> {
     })
 }
 
+fn empty_to_none(value: Option<String>) -> Option<String> {
+    value.and_then(|item| {
+        let trimmed = item.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
 fn app_db_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|error| error.to_string())?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
@@ -815,13 +1139,19 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             workspace_snapshot,
             profile_update,
+            project_create,
+            project_update,
+            project_archive,
             task_create,
             task_update,
             task_move,
             task_archive,
-            note_create,
-            note_update,
-            note_archive,
+            essay_category_create,
+            essay_category_update,
+            essay_category_archive,
+            essay_create,
+            essay_update,
+            essay_archive,
             settings_update,
             chat_send
         ])

@@ -1,6 +1,6 @@
 import {useEffect, useState} from 'react';
-import type {Settings, UserProfile} from '../types';
-import {commands} from '../services/commands';
+import type {Settings, UserProfile} from '../../shared/types';
+import {commands} from '../../core/services/commands';
 
 export default function SettingsPage({
   profile,
