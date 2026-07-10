@@ -61,6 +61,7 @@ struct Task {
     project_id: Option<String>,
     labels: Vec<String>,
     due_date: String,
+    progress: i64,
     parent_id: Option<String>,
     order_num: i64,
     archived_at: Option<String>,
@@ -192,6 +193,7 @@ struct TaskPatch {
     project_id: Option<String>,
     labels: Option<Vec<String>>,
     due_date: Option<String>,
+    progress: Option<i64>,
     parent_id: Option<String>,
     archived_at: Option<String>,
 }
@@ -290,6 +292,7 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     ensure_column(conn, "tasks", "project_id", "TEXT")?;
+    ensure_column(conn, "tasks", "progress", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(conn, "notes", "category_id", "TEXT")?;
     ensure_column(conn, "user_profile", "age", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "user_profile", "personality", "TEXT NOT NULL DEFAULT ''")?;
@@ -490,6 +493,18 @@ fn project_update(state: State<AppState>, project: ProjectPatch) -> Result<Proje
 
 #[tauri::command]
 fn project_archive(state: State<AppState>, id: String) -> Result<Project, String> {
+    let conn = open_db(&state)?;
+    let active_task_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE project_id = ?1 AND archived_at IS NULL",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if active_task_count > 0 {
+        return Err("该项目仍有关联任务，请先转移或清空关联任务。".to_string());
+    }
+    drop(conn);
     project_update(
         state,
         ProjectPatch {
@@ -512,8 +527,8 @@ fn task_create(state: State<AppState>, task: TaskPatch) -> Result<Task, String> 
         .map_err(|error| error.to_string())?;
     conn.execute(
         "INSERT INTO tasks
-        (id, title, description, type, priority, status, project_id, labels, due_date, parent_id, order_num, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+        (id, title, description, type, priority, status, project_id, labels, due_date, progress, parent_id, order_num, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
         params![
             id,
             task.title.unwrap_or_else(|| "未命名任务".to_string()),
@@ -524,7 +539,8 @@ fn task_create(state: State<AppState>, task: TaskPatch) -> Result<Task, String> 
             empty_to_none(task.project_id),
             labels,
             task.due_date.unwrap_or_default(),
-            task.parent_id,
+            task.progress.unwrap_or(0).clamp(0, 100),
+            empty_to_none(task.parent_id),
             order_num,
             timestamp
         ],
@@ -544,10 +560,15 @@ fn task_update(state: State<AppState>, task: TaskPatch) -> Result<Task, String> 
         Some(value) => Some(value.trim().to_string()),
         None => current.project_id,
     };
+    let next_parent_id = match task.parent_id {
+        Some(value) if value.trim().is_empty() => None,
+        Some(value) => Some(value.trim().to_string()),
+        None => current.parent_id,
+    };
     conn.execute(
         "UPDATE tasks SET title = ?1, description = ?2, type = ?3, priority = ?4, status = ?5,
-        project_id = ?6, labels = ?7, due_date = ?8, parent_id = ?9, archived_at = ?10, updated_at = ?11
-        WHERE id = ?12",
+        project_id = ?6, labels = ?7, due_date = ?8, progress = ?9, parent_id = ?10, archived_at = ?11, updated_at = ?12
+        WHERE id = ?13",
         params![
             task.title.unwrap_or(current.title),
             task.description.unwrap_or(current.description),
@@ -557,7 +578,8 @@ fn task_update(state: State<AppState>, task: TaskPatch) -> Result<Task, String> 
             next_project_id,
             labels,
             task.due_date.unwrap_or(current.due_date),
-            task.parent_id.or(current.parent_id),
+            task.progress.unwrap_or(current.progress).clamp(0, 100),
+            next_parent_id,
             task.archived_at.or(current.archived_at),
             now(),
             id
@@ -581,6 +603,7 @@ fn task_move(state: State<AppState>, id: String, status: String) -> Result<Task,
             project_id: None,
             labels: None,
             due_date: None,
+            progress: None,
             parent_id: None,
             archived_at: None,
         },
@@ -602,6 +625,7 @@ fn task_archive(state: State<AppState>, id: String) -> Result<Task, String> {
             project_id: None,
             labels: None,
             due_date: None,
+            progress: None,
             parent_id: None,
         },
     )
@@ -939,7 +963,7 @@ fn map_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
 
 fn read_task(conn: &Connection, id: &str) -> Result<Task, String> {
     conn.query_row(
-        "SELECT id, title, description, type, priority, status, project_id, labels, due_date,
+        "SELECT id, title, description, type, priority, status, project_id, labels, due_date, progress,
         parent_id, order_num, archived_at, created_at, updated_at FROM tasks WHERE id = ?1",
         params![id],
         map_task,
@@ -950,7 +974,7 @@ fn read_task(conn: &Connection, id: &str) -> Result<Task, String> {
 fn read_tasks(conn: &Connection) -> Result<Vec<Task>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, title, description, type, priority, status, project_id, labels, due_date,
+            "SELECT id, title, description, type, priority, status, project_id, labels, due_date, progress,
             parent_id, order_num, archived_at, created_at, updated_at FROM tasks ORDER BY order_num ASC, updated_at DESC",
         )
         .map_err(|error| error.to_string())?;
@@ -974,11 +998,12 @@ fn map_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
         project_id: row.get(6)?,
         labels: serde_json::from_str(&labels).unwrap_or_default(),
         due_date: row.get(8)?,
-        parent_id: row.get(9)?,
-        order_num: row.get(10)?,
-        archived_at: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        progress: row.get(9)?,
+        parent_id: row.get(10)?,
+        order_num: row.get(11)?,
+        archived_at: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 

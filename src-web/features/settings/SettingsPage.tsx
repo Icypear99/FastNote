@@ -16,6 +16,7 @@ import type {Settings as AppSettings, UserProfile} from '../../shared/types';
 import {commands} from '../../core/services/commands';
 
 type SettingsTab = 'account' | 'system' | 'model' | 'shortcuts' | 'help';
+type SaveSuccessMessage = {title: string; message: string};
 
 const tabs: Array<{id: SettingsTab; label: string; icon: typeof UserRound}> = [
   {id: 'account', label: '账户管理', icon: UserRound},
@@ -24,6 +25,14 @@ const tabs: Array<{id: SettingsTab; label: string; icon: typeof UserRound}> = [
   {id: 'shortcuts', label: '快捷键', icon: KeyRound},
   {id: 'help', label: '帮助与反馈', icon: CircleHelp},
 ];
+
+const saveSuccessMessages: Record<SettingsTab, SaveSuccessMessage> = {
+  account: {title: '账户资料保存成功', message: '头像、昵称和个人资料已更新。'},
+  system: {title: '系统设置保存成功', message: '显示语言、字体与主题设置已更新。'},
+  model: {title: '模型设置保存成功', message: 'AI 服务与模型配置已更新。'},
+  shortcuts: {title: '快捷键保存成功', message: '快捷键配置已更新，可按新按键使用。'},
+  help: {title: '设置保存成功', message: '当前设备上的 FastNote 设置已更新。'},
+};
 
 const shortcutFields: Array<{key: keyof AppSettings; label: string; hint: string}> = [
   {key: 'sendMessageShortcut', label: '发送消息', hint: '模型对话输入框发送消息'},
@@ -45,6 +54,7 @@ export default function SettingsDialog({
   initialTab = 'account',
   run,
   onThemePreview,
+  onSaveSuccess,
   onClose,
 }: {
   profile: UserProfile;
@@ -53,6 +63,7 @@ export default function SettingsDialog({
   initialTab?: SettingsTab;
   run: <T>(action: Promise<T>) => Promise<T>;
   onThemePreview: (themeMode: AppSettings['themeMode'] | null) => void;
+  onSaveSuccess: (message: SaveSuccessMessage) => void;
   onClose: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
@@ -97,6 +108,7 @@ export default function SettingsDialog({
     await run(commands.updateSettings(settingsDraft));
     onThemePreview(null);
     setMessage('已保存设置');
+    onSaveSuccess(saveSuccessMessages[activeTab]);
   };
 
   const uploadAvatar = (event: ChangeEvent<HTMLInputElement>) => {

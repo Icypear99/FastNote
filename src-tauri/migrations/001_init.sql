@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id TEXT,
   labels TEXT NOT NULL DEFAULT '[]',
   due_date TEXT NOT NULL DEFAULT '',
+  progress INTEGER NOT NULL DEFAULT 0,
   parent_id TEXT,
   order_num INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,

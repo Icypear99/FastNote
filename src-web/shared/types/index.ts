@@ -44,6 +44,7 @@ export interface Task {
   projectId?: string;
   labels: string[];
   dueDate: string;
+  progress: number;
   parentId?: string;
   orderNum: number;
   archivedAt?: string;

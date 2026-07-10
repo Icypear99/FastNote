@@ -5,6 +5,7 @@ import {
   BookOpenText,
   BriefcaseBusiness,
   CalendarDays,
+  CircleCheck,
   CircleHelp,
   Home,
   LogOut,
@@ -65,8 +66,10 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<'account' | 'system' | 'model' | 'shortcuts' | 'help'>('account');
   const [workspacePath, setWorkspacePath] = useState('');
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState<{title?: string; message: string; tone?: 'success'} | null>(null);
   const globalSearchRef = useRef<HTMLInputElement>(null);
+  const profileMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const profileMenuRef = useRef<HTMLElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -136,6 +139,20 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [snapshot?.settings.globalSearchShortcut]);
 
+  useEffect(() => {
+    if (!isProfileMenuOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (profileMenuTriggerRef.current?.contains(target) || profileMenuRef.current?.contains(target)) return;
+      setIsProfileMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [isProfileMenuOpen]);
+
   const sidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH;
   const currentTitle = panelMeta[activePanel].title;
   const panel = useMemo(() => {
@@ -160,7 +177,6 @@ export default function App() {
   }, [activePanel, run, setActivePanel, snapshot]);
 
   const updateTheme = async (themeMode: 'light' | 'dark') => {
-    setIsProfileMenuOpen(false);
     setThemePreview(themeMode);
     await run(commands.updateSettings({themeMode}));
     setThemePreview(null);
@@ -168,8 +184,8 @@ export default function App() {
 
   const showLocalLogoutMessage = () => {
     setIsProfileMenuOpen(false);
-    setToast('当前是本地免登录模式，无需退出登录。');
-    window.setTimeout(() => setToast(''), 2400);
+    setToast({message: '当前是本地免登录模式，无需退出登录。'});
+    window.setTimeout(() => setToast(null), 2400);
   };
 
   const minimize = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -211,6 +227,7 @@ export default function App() {
         <div className="sidebar-footer">
           {snapshot && (
             <button
+              ref={profileMenuTriggerRef}
               className="sidebar-footer-item profile-entry"
               type="button"
               title={snapshot.profile.nickname || '本地用户'}
@@ -224,7 +241,7 @@ export default function App() {
             </button>
           )}
           {snapshot && isProfileMenuOpen && (
-            <section className="profile-popover" aria-label="个人菜单">
+            <section ref={profileMenuRef} className="profile-popover" aria-label="个人菜单">
               <header className="profile-popover-head">
                 <AvatarImage avatarUrl={snapshot.profile.avatarUrl} nickname={snapshot.profile.nickname} />
                 <div>
@@ -254,7 +271,7 @@ export default function App() {
                 <CircleHelp />
                 <span>帮助与反馈</span>
               </button>
-              <button type="button" onClick={() => setToast('当前已经是最新版本。')}>
+              <button type="button" onClick={() => setToast({message: '当前已经是最新版本。'})}>
                 <RefreshCw />
                 <span>检查更新</span>
               </button>
@@ -323,13 +340,25 @@ export default function App() {
           initialTab={settingsInitialTab}
           run={run}
           onThemePreview={setThemePreview}
+          onSaveSuccess={({title, message}) => {
+            setToast({title, message, tone: 'success'});
+            window.setTimeout(() => setToast(null), 3200);
+          }}
           onClose={() => {
             setThemePreview(null);
             setIsSettingsOpen(false);
           }}
         />
       )}
-      {toast && <div className="app-toast">{toast}</div>}
+      {toast && (
+        <div className={`app-toast ${toast.tone === 'success' ? 'app-toast-success' : ''}`} role="status" aria-live="polite">
+          {toast.tone === 'success' && <CircleCheck aria-hidden="true" />}
+          <span className="app-toast-copy">
+            {toast.title && <strong>{toast.title}</strong>}
+            <span>{toast.message}</span>
+          </span>
+        </div>
+      )}
     </div>
   );
 }

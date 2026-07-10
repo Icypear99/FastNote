@@ -17,6 +17,7 @@ const DEFAULT_PROJECT_ID = 'default-project';
 const DEFAULT_CATEGORY_ID = 'default-essay-category';
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
+const clampProgress = (value: number | undefined) => Math.min(100, Math.max(0, Number.isFinite(value) ? value! : 0));
 
 type LegacySnapshot = Partial<WorkspaceSnapshot> & {notes?: Essay[]};
 
@@ -89,6 +90,7 @@ const seedTasks = (): Task[] => [
     projectId: DEFAULT_PROJECT_ID,
     labels: ['MVP'],
     dueDate: new Date().toISOString().slice(0, 10),
+    progress: 45,
     orderNum: 1,
     createdAt: now(),
     updatedAt: now(),
@@ -103,6 +105,7 @@ const seedTasks = (): Task[] => [
     projectId: DEFAULT_PROJECT_ID,
     labels: ['工具箱'],
     dueDate: '',
+    progress: 0,
     orderNum: 2,
     createdAt: now(),
     updatedAt: now(),
@@ -147,7 +150,12 @@ const normalizeSnapshot = (input: LegacySnapshot): WorkspaceSnapshot => {
   return {
     profile: {...fallback.profile, ...input.profile},
     projects,
-    tasks: (input.tasks ?? fallback.tasks).map((task) => ({...task, projectId: task.projectId || undefined})),
+    tasks: (input.tasks ?? fallback.tasks).map((task) => ({
+      ...task,
+      projectId: task.projectId || undefined,
+      parentId: task.parentId || undefined,
+      progress: clampProgress(task.progress),
+    })),
     essays,
     essayCategories,
     conversations: input.conversations ?? fallback.conversations,
@@ -214,6 +222,10 @@ export const localDb = {
     return snapshot.projects.find((project) => project.id === input.id)!;
   },
   async archiveProject(idValue: string) {
+    const snapshot = readSnapshot();
+    if (snapshot.tasks.some((task) => !task.archivedAt && task.projectId === idValue)) {
+      throw new Error('该项目仍有关联任务，请先转移或清空关联任务。');
+    }
     return localDb.updateProject({id: idValue, archivedAt: now()});
   },
   async createTask(input: Partial<Task>) {
@@ -225,10 +237,11 @@ export const localDb = {
       type: input.type || 'personal',
       priority: input.priority || 'P2',
       status: input.status || 'todo',
-      projectId: input.projectId,
+      projectId: input.projectId || undefined,
       labels: input.labels || [],
       dueDate: input.dueDate || '',
-      parentId: input.parentId,
+      progress: clampProgress(input.progress),
+      parentId: input.parentId || undefined,
       orderNum: snapshot.tasks.length + 1,
       createdAt: now(),
       updatedAt: now(),
@@ -240,7 +253,16 @@ export const localDb = {
   async updateTask(input: Partial<Task> & {id: string}) {
     const snapshot = readSnapshot();
     snapshot.tasks = snapshot.tasks.map((task) =>
-      task.id === input.id ? {...task, ...input, updatedAt: now()} : task,
+      task.id === input.id
+        ? {
+            ...task,
+            ...input,
+            projectId: input.projectId === '' ? undefined : input.projectId ?? task.projectId,
+            parentId: input.parentId === '' ? undefined : input.parentId ?? task.parentId,
+            progress: input.progress === undefined ? task.progress : clampProgress(input.progress),
+            updatedAt: now(),
+          }
+        : task,
     );
     writeSnapshot(snapshot);
     return snapshot.tasks.find((task) => task.id === input.id)!;
