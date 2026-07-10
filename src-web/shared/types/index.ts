@@ -1,5 +1,7 @@
-export type PanelKey = 'dashboard' | 'tasks' | 'essays' | 'tools' | 'assistant' | 'settings';
+export type PanelKey = 'dashboard' | 'tasks' | 'essays' | 'tools' | 'assistant';
 export type ThemeMode = 'system' | 'light' | 'dark' | 'deep-blue' | 'transparent';
+export type AppLanguage = 'zh-CN' | 'en-US';
+export type FontSizeMode = 'small' | 'default' | 'large';
 
 export type TaskType = 'personal' | 'epic' | 'story' | 'task' | 'bug';
 export type TaskPriority = 'P0' | 'P1' | 'P2' | 'P3';
@@ -12,6 +14,9 @@ export interface UserProfile {
   avatarUrl: string;
   phone: string;
   email: string;
+  age: string;
+  personality: string;
+  gender: string;
   phoneBound: boolean;
   emailBound: boolean;
   loginProvider: 'local' | 'password' | 'phone' | 'email' | 'oauth';
@@ -99,6 +104,13 @@ export interface Settings {
   aiModel: string;
   aiApiKey: string;
   themeMode: ThemeMode;
+  language: AppLanguage;
+  fontSize: FontSizeMode;
+  workspacePath: string;
+  sendMessageShortcut: string;
+  globalSearchShortcut: string;
+  newTaskShortcut: string;
+  newEssayShortcut: string;
 }
 
 export interface WorkspaceSnapshot {

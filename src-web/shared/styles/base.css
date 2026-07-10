@@ -138,6 +138,22 @@
   --shadow: 0 20px 54px rgba(31, 41, 55, 0.16);
 }
 
+:root[data-font-size="small"] {
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+}
+
+:root[data-font-size="large"] {
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16px;
+  --text-lg: 18px;
+}
+
 * {
   box-sizing: border-box;
 }

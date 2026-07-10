@@ -5,11 +5,16 @@ import {
   BookOpenText,
   BriefcaseBusiness,
   CalendarDays,
+  CircleHelp,
   Home,
+  LogOut,
   Maximize2,
   Minus,
+  Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
   Settings,
-  UserRound,
   Wrench,
   X,
 } from 'lucide-react';
@@ -18,7 +23,7 @@ import TasksPage from '../features/tasks/TasksPage';
 import EssaysPage from '../features/essays/EssaysPage';
 import ToolsPage from '../features/tools/ToolsPage';
 import AssistantPage from '../features/assistant/AssistantPage';
-import SettingsPage from '../features/settings/SettingsPage';
+import SettingsDialog, {AvatarImage} from '../features/settings/SettingsPage';
 import {commands, isTauriRuntime} from '../core/services/commands';
 import {useUiStore} from './stores/uiStore';
 import type {PanelKey, ThemeMode, WorkspaceSnapshot} from '../shared/types';
@@ -29,14 +34,14 @@ const panelMeta: Record<PanelKey, {title: string; icon: typeof Home}> = {
   essays: {title: '随笔', icon: BookOpenText},
   tools: {title: '工具', icon: Wrench},
   assistant: {title: '助手', icon: Bot},
-  settings: {title: '设置', icon: Settings},
 };
 
 const navItems: PanelKey[] = ['dashboard', 'tasks', 'essays', 'tools', 'assistant'];
-const themeModes: ThemeMode[] = ['light', 'dark', 'deep-blue', 'transparent', 'system'];
+const SIDEBAR_EXPANDED_WIDTH = 232;
+const SIDEBAR_COLLAPSED_WIDTH = 62;
 
-function resolveTheme(themeMode: ThemeMode, prefersDark: boolean) {
-  return themeMode === 'system' ? (prefersDark ? 'dark' : 'light') : themeMode;
+function normalizeTheme(themeMode: ThemeMode | null | undefined): 'light' | 'dark' {
+  return themeMode === 'dark' ? 'dark' : 'light';
 }
 
 function formatDateTime(date: Date) {
@@ -54,13 +59,14 @@ export default function App() {
   const {activePanel, setActivePanel} = useUiStore();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
   const [themePreview, setThemePreview] = useState<ThemeMode | null>(null);
-  const [prefersDark, setPrefersDark] = useState(false);
   const [error, setError] = useState('');
-  const [sidebarWidth, setSidebarWidth] = useState(232);
-  const sidebarRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-  const dragStartX = useRef(0);
-  const dragStartWidth = useRef(60);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'account' | 'system' | 'model' | 'shortcuts' | 'help'>('account');
+  const [workspacePath, setWorkspacePath] = useState('');
+  const [toast, setToast] = useState('');
+  const globalSearchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -85,6 +91,13 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
+    commands
+      .getWorkspacePath()
+      .then(setWorkspacePath)
+      .catch(() => setWorkspacePath('localStorage: fastnote:v2'));
+  }, []);
+
+  useEffect(() => {
     if (!isTauriRuntime()) return;
     const applyWindowIcon = async () => {
       try {
@@ -99,42 +112,31 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
-    if (!media) return;
-    const update = () => setPrefersDark(media.matches);
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-
-  useEffect(() => {
     const themeMode = themePreview ?? snapshot?.settings.themeMode ?? 'light';
-    const safeTheme = themeModes.includes(themeMode) ? themeMode : 'light';
-    const resolvedTheme = resolveTheme(safeTheme, prefersDark);
+    const resolvedTheme = normalizeTheme(themeMode);
     document.documentElement.dataset.theme = resolvedTheme;
-    document.documentElement.dataset.themeMode = safeTheme;
-  }, [prefersDark, snapshot?.settings.themeMode, themePreview]);
+    document.documentElement.dataset.themeMode = resolvedTheme;
+  }, [snapshot?.settings.themeMode, themePreview]);
 
   useEffect(() => {
-    const move = (event: MouseEvent) => {
-      if (!isDragging.current) return;
-      const nextWidth = Math.min(280, Math.max(72, dragStartWidth.current + event.clientX - dragStartX.current));
-      setSidebarWidth(nextWidth);
-    };
-    const up = () => {
-      isDragging.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-    return () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-    };
-  }, []);
+    document.documentElement.dataset.fontSize = snapshot?.settings.fontSize ?? 'default';
+  }, [snapshot?.settings.fontSize]);
 
-  const isCollapsed = sidebarWidth <= 96;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (matchesShortcut(event, snapshot?.settings.globalSearchShortcut ?? 'Ctrl+K')) {
+        event.preventDefault();
+        globalSearchRef.current?.focus();
+      }
+      if (event.key === 'Escape') {
+        setIsProfileMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [snapshot?.settings.globalSearchShortcut]);
+
+  const sidebarWidth = isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH;
   const currentTitle = panelMeta[activePanel].title;
   const panel = useMemo(() => {
     if (!snapshot) return null;
@@ -154,16 +156,20 @@ export default function App() {
         />
       );
     }
-    return <SettingsPage profile={snapshot.profile} settings={snapshot.settings} run={run} onThemePreview={setThemePreview} />;
+    return <DashboardPage snapshot={snapshot} onNavigate={setActivePanel} />;
   }, [activePanel, run, setActivePanel, snapshot]);
 
-  const handleResizeMouseDown = (event: React.MouseEvent) => {
-    event.preventDefault();
-    isDragging.current = true;
-    dragStartX.current = event.clientX;
-    dragStartWidth.current = sidebarWidth;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+  const updateTheme = async (themeMode: 'light' | 'dark') => {
+    setIsProfileMenuOpen(false);
+    setThemePreview(themeMode);
+    await run(commands.updateSettings({themeMode}));
+    setThemePreview(null);
+  };
+
+  const showLocalLogoutMessage = () => {
+    setIsProfileMenuOpen(false);
+    setToast('当前是本地免登录模式，无需退出登录。');
+    window.setTimeout(() => setToast(''), 2400);
   };
 
   const minimize = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -187,8 +193,7 @@ export default function App() {
   return (
     <div className="app-container">
       <aside
-        ref={sidebarRef}
-        className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}
+        className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}
         style={{width: sidebarWidth, minWidth: sidebarWidth}}
         data-tauri-drag-region
       >
@@ -204,10 +209,72 @@ export default function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <SidebarButton panel="settings" activePanel={activePanel} onClick={setActivePanel} isFooter />
+          {snapshot && (
+            <button
+              className="sidebar-footer-item profile-entry"
+              type="button"
+              title={snapshot.profile.nickname || '本地用户'}
+              aria-label={snapshot.profile.nickname || '本地用户'}
+              onClick={() => setIsProfileMenuOpen((value) => !value)}
+            >
+              <span className="sidebar-footer-icon profile-entry-icon">
+                <AvatarImage avatarUrl={snapshot.profile.avatarUrl} nickname={snapshot.profile.nickname} />
+              </span>
+              <span className="sidebar-footer-label">{snapshot.profile.nickname || '本地用户'}</span>
+            </button>
+          )}
+          {snapshot && isProfileMenuOpen && (
+            <section className="profile-popover" aria-label="个人菜单">
+              <header className="profile-popover-head">
+                <AvatarImage avatarUrl={snapshot.profile.avatarUrl} nickname={snapshot.profile.nickname} />
+                <div>
+                  <strong>{snapshot.profile.nickname || '本地用户'}</strong>
+                  <span>本地免登录</span>
+                </div>
+              </header>
+              <button type="button" onClick={() => { setSettingsInitialTab('account'); setIsSettingsOpen(true); setIsProfileMenuOpen(false); }}>
+                <Settings />
+                <span>设置</span>
+              </button>
+              <div className="profile-popover-theme">
+                <span>
+                  <Palette />
+                  外观
+                </span>
+                <div className="segmented">
+                  <button className={normalizeTheme(snapshot.settings.themeMode) === 'light' ? 'active' : ''} type="button" onClick={() => void updateTheme('light')}>
+                    浅色
+                  </button>
+                  <button className={normalizeTheme(snapshot.settings.themeMode) === 'dark' ? 'active' : ''} type="button" onClick={() => void updateTheme('dark')}>
+                    深色
+                  </button>
+                </div>
+              </div>
+              <button type="button" onClick={() => { setSettingsInitialTab('help'); setIsSettingsOpen(true); setIsProfileMenuOpen(false); }}>
+                <CircleHelp />
+                <span>帮助与反馈</span>
+              </button>
+              <button type="button" onClick={() => setToast('当前已经是最新版本。')}>
+                <RefreshCw />
+                <span>检查更新</span>
+              </button>
+              <button className="profile-popover-logout" type="button" onClick={showLocalLogoutMessage}>
+                <LogOut />
+                <span>退出登录</span>
+              </button>
+            </section>
+          )}
+          <button
+            className="sidebar-footer-item sidebar-toggle-item"
+            type="button"
+            title={isSidebarCollapsed ? '展开导航栏' : '收缩导航栏'}
+            aria-label={isSidebarCollapsed ? '展开导航栏' : '收缩导航栏'}
+            onClick={() => setIsSidebarCollapsed((value) => !value)}
+          >
+            <span className="sidebar-footer-icon">{isSidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}</span>
+            <span className="sidebar-footer-label">{isSidebarCollapsed ? '展开' : '收缩'}</span>
+          </button>
         </div>
-
-        <div className="sidebar-resize-handle" onMouseDown={handleResizeMouseDown} />
       </aside>
 
       <main className="panel-area">
@@ -218,7 +285,7 @@ export default function App() {
           </div>
           <label className="global-search" aria-label="全局搜索">
             <span>搜索</span>
-            <input placeholder="任务、项目、随笔" />
+            <input ref={globalSearchRef} placeholder="任务、项目、随笔" />
           </label>
           <div className="panel-window-drag-fill" data-tauri-drag-region />
           <TopbarClock />
@@ -248,6 +315,21 @@ export default function App() {
           )}
         </section>
       </main>
+      {snapshot && isSettingsOpen && (
+        <SettingsDialog
+          profile={snapshot.profile}
+          settings={{...snapshot.settings, workspacePath: workspacePath || snapshot.settings.workspacePath}}
+          workspacePath={workspacePath}
+          initialTab={settingsInitialTab}
+          run={run}
+          onThemePreview={setThemePreview}
+          onClose={() => {
+            setThemePreview(null);
+            setIsSettingsOpen(false);
+          }}
+        />
+      )}
+      {toast && <div className="app-toast">{toast}</div>}
     </div>
   );
 }
@@ -272,22 +354,41 @@ function SidebarButton({
   panel,
   activePanel,
   onClick,
-  isFooter = false,
 }: {
   panel: PanelKey;
   activePanel: PanelKey;
   onClick: (panel: PanelKey) => void;
-  isFooter?: boolean;
 }) {
   const meta = panelMeta[panel];
-  const Icon = panel === 'settings' ? UserRound : meta.icon;
-  const className = `${isFooter ? 'sidebar-footer-item' : 'sidebar-nav-item'} ${activePanel === panel ? 'active' : ''}`;
+  const Icon = meta.icon;
+  const className = `sidebar-nav-item ${activePanel === panel ? 'active' : ''}`;
   return (
     <button className={className} type="button" title={meta.title} onClick={() => onClick(panel)}>
-      <span className={isFooter ? 'sidebar-footer-icon' : 'sidebar-nav-icon'}>
+      <span className="sidebar-nav-icon">
         <Icon />
       </span>
-      <span className={isFooter ? 'sidebar-footer-label' : 'sidebar-nav-label'}>{meta.title}</span>
+      <span className="sidebar-nav-label">{meta.title}</span>
     </button>
+  );
+}
+
+function matchesShortcut(event: KeyboardEvent, shortcut: string) {
+  const parts = shortcut
+    .toLowerCase()
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const key = parts.find((part) => !['ctrl', 'control', 'shift', 'alt', 'meta', 'cmd'].includes(part));
+  const wantsCtrl = parts.includes('ctrl') || parts.includes('control');
+  const wantsShift = parts.includes('shift');
+  const wantsAlt = parts.includes('alt');
+  const wantsMeta = parts.includes('meta') || parts.includes('cmd');
+  return (
+    Boolean(key) &&
+    event.key.toLowerCase() === key &&
+    event.ctrlKey === wantsCtrl &&
+    event.shiftKey === wantsShift &&
+    event.altKey === wantsAlt &&
+    event.metaKey === wantsMeta
   );
 }

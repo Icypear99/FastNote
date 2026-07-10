@@ -7,7 +7,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, LogicalSize, Manager, Size, State};
 use uuid::Uuid;
 
 const DEFAULT_PROJECT_ID: &str = "default-project";
@@ -26,6 +26,9 @@ struct UserProfile {
     avatar_url: String,
     phone: String,
     email: String,
+    age: String,
+    personality: String,
+    gender: String,
     phone_bound: bool,
     email_bound: bool,
     login_provider: String,
@@ -130,6 +133,13 @@ struct Settings {
     ai_model: String,
     ai_api_key: String,
     theme_mode: String,
+    language: String,
+    font_size: String,
+    workspace_path: String,
+    send_message_shortcut: String,
+    global_search_shortcut: String,
+    new_task_shortcut: String,
+    new_essay_shortcut: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +163,9 @@ struct ProfilePatch {
     avatar_url: Option<String>,
     phone: Option<String>,
     email: Option<String>,
+    age: Option<String>,
+    personality: Option<String>,
+    gender: Option<String>,
     login_provider: Option<String>,
     oauth_provider: Option<String>,
 }
@@ -214,6 +227,13 @@ struct SettingsPatch {
     ai_model: Option<String>,
     ai_api_key: Option<String>,
     theme_mode: Option<String>,
+    language: Option<String>,
+    font_size: Option<String>,
+    workspace_path: Option<String>,
+    send_message_shortcut: Option<String>,
+    global_search_shortcut: Option<String>,
+    new_task_shortcut: Option<String>,
+    new_essay_shortcut: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -271,6 +291,9 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     ensure_column(conn, "tasks", "project_id", "TEXT")?;
     ensure_column(conn, "notes", "category_id", "TEXT")?;
+    ensure_column(conn, "user_profile", "age", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(conn, "user_profile", "personality", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(conn, "user_profile", "gender", "TEXT NOT NULL DEFAULT ''")?;
     Ok(())
 }
 
@@ -323,7 +346,14 @@ fn seed_defaults(conn: &Connection) -> Result<(), String> {
         ("aiBaseUrl", "https://api.openai.com/v1/chat/completions"),
         ("aiModel", "gpt-4.1-mini"),
         ("aiApiKey", ""),
-        ("themeMode", "system"),
+        ("themeMode", "light"),
+        ("language", "zh-CN"),
+        ("fontSize", "default"),
+        ("workspacePath", ""),
+        ("sendMessageShortcut", "Enter"),
+        ("globalSearchShortcut", "Ctrl+K"),
+        ("newTaskShortcut", "Ctrl+Shift+T"),
+        ("newEssayShortcut", "Ctrl+Shift+N"),
     ];
     for (key, value) in defaults {
         conn.execute(
@@ -369,6 +399,11 @@ fn workspace_snapshot(state: State<AppState>) -> Result<WorkspaceSnapshot, Strin
 }
 
 #[tauri::command]
+fn workspace_path(state: State<AppState>) -> Result<String, String> {
+    Ok(state.db_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn profile_update(state: State<AppState>, profile: ProfilePatch) -> Result<UserProfile, String> {
     let conn = open_db(&state)?;
     let current = read_profile(&conn)?;
@@ -379,6 +414,9 @@ fn profile_update(state: State<AppState>, profile: ProfilePatch) -> Result<UserP
         avatar_url: profile.avatar_url.unwrap_or(current.avatar_url),
         phone: profile.phone.unwrap_or(current.phone),
         email: profile.email.unwrap_or(current.email),
+        age: profile.age.unwrap_or(current.age),
+        personality: profile.personality.unwrap_or(current.personality),
+        gender: profile.gender.unwrap_or(current.gender),
         phone_bound: false,
         email_bound: false,
         login_provider: profile.login_provider.unwrap_or(current.login_provider),
@@ -390,13 +428,16 @@ fn profile_update(state: State<AppState>, profile: ProfilePatch) -> Result<UserP
     let email_bound = !updated.email.trim().is_empty();
     conn.execute(
         "UPDATE user_profile SET nickname = ?1, avatar_url = ?2, phone = ?3, email = ?4,
-        phone_bound = ?5, email_bound = ?6, login_provider = ?7, oauth_provider = ?8, updated_at = ?9
-        WHERE id = ?10",
+        age = ?5, personality = ?6, gender = ?7, phone_bound = ?8, email_bound = ?9,
+        login_provider = ?10, oauth_provider = ?11, updated_at = ?12 WHERE id = ?13",
         params![
             updated.nickname,
             updated.avatar_url,
             updated.phone,
             updated.email,
+            updated.age,
+            updated.personality,
+            updated.gender,
             phone_bound as i64,
             email_bound as i64,
             updated.login_provider,
@@ -705,6 +746,13 @@ fn settings_update(state: State<AppState>, settings: SettingsPatch) -> Result<Se
         ai_model: settings.ai_model.unwrap_or(current.ai_model),
         ai_api_key: settings.ai_api_key.unwrap_or(current.ai_api_key),
         theme_mode: settings.theme_mode.unwrap_or(current.theme_mode),
+        language: settings.language.unwrap_or(current.language),
+        font_size: settings.font_size.unwrap_or(current.font_size),
+        workspace_path: settings.workspace_path.unwrap_or(current.workspace_path),
+        send_message_shortcut: settings.send_message_shortcut.unwrap_or(current.send_message_shortcut),
+        global_search_shortcut: settings.global_search_shortcut.unwrap_or(current.global_search_shortcut),
+        new_task_shortcut: settings.new_task_shortcut.unwrap_or(current.new_task_shortcut),
+        new_essay_shortcut: settings.new_essay_shortcut.unwrap_or(current.new_essay_shortcut),
     };
     for (key, value) in [
         ("aiProvider", next.ai_provider.as_str()),
@@ -712,6 +760,13 @@ fn settings_update(state: State<AppState>, settings: SettingsPatch) -> Result<Se
         ("aiModel", next.ai_model.as_str()),
         ("aiApiKey", next.ai_api_key.as_str()),
         ("themeMode", next.theme_mode.as_str()),
+        ("language", next.language.as_str()),
+        ("fontSize", next.font_size.as_str()),
+        ("workspacePath", next.workspace_path.as_str()),
+        ("sendMessageShortcut", next.send_message_shortcut.as_str()),
+        ("globalSearchShortcut", next.global_search_shortcut.as_str()),
+        ("newTaskShortcut", next.new_task_shortcut.as_str()),
+        ("newEssayShortcut", next.new_essay_shortcut.as_str()),
     ] {
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
@@ -824,8 +879,8 @@ async fn model_reply(settings: &Settings, messages: &[AiMessage], content: &str)
 
 fn read_profile(conn: &Connection) -> Result<UserProfile, String> {
     conn.query_row(
-        "SELECT id, local_user_key, nickname, avatar_url, phone, email, phone_bound, email_bound,
-        login_provider, oauth_provider, created_at, updated_at FROM user_profile LIMIT 1",
+        "SELECT id, local_user_key, nickname, avatar_url, phone, email, age, personality, gender,
+        phone_bound, email_bound, login_provider, oauth_provider, created_at, updated_at FROM user_profile LIMIT 1",
         [],
         |row| {
             Ok(UserProfile {
@@ -835,12 +890,15 @@ fn read_profile(conn: &Connection) -> Result<UserProfile, String> {
                 avatar_url: row.get(3)?,
                 phone: row.get(4)?,
                 email: row.get(5)?,
-                phone_bound: row.get::<_, i64>(6)? == 1,
-                email_bound: row.get::<_, i64>(7)? == 1,
-                login_provider: row.get(8)?,
-                oauth_provider: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
+                age: row.get(6)?,
+                personality: row.get(7)?,
+                gender: row.get(8)?,
+                phone_bound: row.get::<_, i64>(9)? == 1,
+                email_bound: row.get::<_, i64>(10)? == 1,
+                login_provider: row.get(11)?,
+                oauth_provider: row.get(12)?,
+                created_at: row.get(13)?,
+                updated_at: row.get(14)?,
             })
         },
     )
@@ -1102,12 +1160,21 @@ fn read_settings(conn: &Connection) -> Result<Settings, String> {
             .map_err(|error| error.to_string())
             .map(|value| value.unwrap_or_else(|| default_value.to_string()))
     };
+    let theme_mode = get("themeMode", "light")?;
+    let theme_mode = if theme_mode == "dark" { "dark" } else { "light" }.to_string();
     Ok(Settings {
         ai_provider: get("aiProvider", "mock")?,
         ai_base_url: get("aiBaseUrl", "https://api.openai.com/v1/chat/completions")?,
         ai_model: get("aiModel", "gpt-4.1-mini")?,
         ai_api_key: get("aiApiKey", "")?,
-        theme_mode: get("themeMode", "system")?,
+        theme_mode,
+        language: get("language", "zh-CN")?,
+        font_size: get("fontSize", "default")?,
+        workspace_path: get("workspacePath", "")?,
+        send_message_shortcut: get("sendMessageShortcut", "Enter")?,
+        global_search_shortcut: get("globalSearchShortcut", "Ctrl+K")?,
+        new_task_shortcut: get("newTaskShortcut", "Ctrl+Shift+T")?,
+        new_essay_shortcut: get("newEssayShortcut", "Ctrl+Shift+N")?,
     })
 }
 
@@ -1128,9 +1195,37 @@ fn app_db_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("workspace.sqlite"))
 }
 
+fn configure_main_window(app: &tauri::App) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+
+    let monitor = window
+        .primary_monitor()
+        .map_err(|error| error.to_string())?
+        .or(window.current_monitor().map_err(|error| error.to_string())?);
+
+    if let Some(monitor) = monitor {
+        let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
+        let monitor_size = monitor.size();
+        let screen_width = f64::from(monitor_size.width) / scale_factor;
+        let target_width = (screen_width * 0.75).round().max(960.0);
+
+        window
+            .set_size(Size::Logical(LogicalSize {
+                width: target_width,
+                height: 820.0,
+            }))
+            .map_err(|error| error.to_string())?;
+    }
+
+    window.center().map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            configure_main_window(app)?;
             let db_path = app_db_path(app.handle())?;
             init_db(&db_path)?;
             app.manage(AppState { db_path });
@@ -1138,6 +1233,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             workspace_snapshot,
+            workspace_path,
             profile_update,
             project_create,
             project_update,

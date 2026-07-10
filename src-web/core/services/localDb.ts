@@ -27,6 +27,9 @@ const defaultProfile = (): UserProfile => ({
   avatarUrl: '',
   phone: '',
   email: '',
+  age: '',
+  personality: '',
+  gender: '',
   phoneBound: false,
   emailBound: false,
   loginProvider: 'local',
@@ -40,7 +43,17 @@ const defaultSettings = (): Settings => ({
   aiModel: 'gpt-4.1-mini',
   aiApiKey: '',
   themeMode: 'light',
+  language: 'zh-CN',
+  fontSize: 'default',
+  workspacePath: 'localStorage: fastnote:v2',
+  sendMessageShortcut: 'Enter',
+  globalSearchShortcut: 'Ctrl+K',
+  newTaskShortcut: 'Ctrl+Shift+T',
+  newEssayShortcut: 'Ctrl+Shift+N',
 });
+
+const normalizeThemeMode = (themeMode: Settings['themeMode'] | undefined): Settings['themeMode'] =>
+  themeMode === 'dark' ? 'dark' : 'light';
 
 const defaultProject = (): Project => ({
   id: DEFAULT_PROJECT_ID,
@@ -132,7 +145,7 @@ const normalizeSnapshot = (input: LegacySnapshot): WorkspaceSnapshot => {
     categoryId: essay.categoryId || defaultCategoryId,
   }));
   return {
-    profile: input.profile ?? fallback.profile,
+    profile: {...fallback.profile, ...input.profile},
     projects,
     tasks: (input.tasks ?? fallback.tasks).map((task) => ({...task, projectId: task.projectId || undefined})),
     essays,
@@ -140,7 +153,7 @@ const normalizeSnapshot = (input: LegacySnapshot): WorkspaceSnapshot => {
     conversations: input.conversations ?? fallback.conversations,
     messages: input.messages ?? fallback.messages,
     dashboardCards: input.dashboardCards ?? fallback.dashboardCards,
-    settings: {...fallback.settings, ...input.settings},
+    settings: {...fallback.settings, ...input.settings, themeMode: normalizeThemeMode(input.settings?.themeMode)},
   };
 };
 
@@ -164,6 +177,9 @@ const writeSnapshot = (snapshot: WorkspaceSnapshot) => {
 export const localDb = {
   async getSnapshot() {
     return readSnapshot();
+  },
+  async getWorkspacePath() {
+    return 'localStorage: fastnote:v2';
   },
   async updateProfile(input: Partial<UserProfile>) {
     const snapshot = readSnapshot();

@@ -13,6 +13,7 @@ async function call<T>(command: string, args: Record<string, unknown>, fallback:
 
 export const commands = {
   getSnapshot: () => call<WorkspaceSnapshot>('workspace_snapshot', {}, localDb.getSnapshot),
+  getWorkspacePath: () => call<string>('workspace_path', {}, localDb.getWorkspacePath),
   updateProfile: (profile: Partial<UserProfile>) =>
     call<UserProfile>('profile_update', {profile}, () => localDb.updateProfile(profile)),
   createProject: (project: Partial<Project>) =>
