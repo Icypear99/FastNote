@@ -1,5 +1,5 @@
 import {invoke} from '@tauri-apps/api/core';
-import type {Essay, EssayCategory, Project, Settings, Task, TaskStatus, UserProfile, WorkspaceSnapshot} from '../../shared/types';
+import type {Essay, EssayCategory, Project, Settings, Task, TaskPlacement, TaskStatus, UserProfile, WorkspaceSnapshot} from '../../shared/types';
 import {localDb} from './localDb';
 
 export const isTauriRuntime = () => Boolean('__TAURI_INTERNALS__' in window);
@@ -27,6 +27,8 @@ export const commands = {
   archiveTask: (id: string) => call<Task>('task_archive', {id}, () => localDb.archiveTask(id)),
   moveTask: (id: string, status: TaskStatus) =>
     call<Task>('task_move', {id, status}, () => localDb.moveTask(id, status)),
+  reorderTasks: (placements: TaskPlacement[]) =>
+    call<void>('tasks_reorder', {placements}, () => localDb.reorderTasks(placements)),
   createEssayCategory: (category: Partial<EssayCategory>) =>
     call<EssayCategory>('essay_category_create', {category}, () => localDb.createEssayCategory(category)),
   updateEssayCategory: (category: Partial<EssayCategory> & {id: string}) =>

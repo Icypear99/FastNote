@@ -2,10 +2,31 @@ import {useEffect, useMemo, useRef, useState} from 'react';
 import type {CSSProperties, MouseEvent} from 'react';
 import {createPortal} from 'react-dom';
 import {
+  closestCorners,
+  DndContext,
+  KeyboardSensor,
+  pointerWithin,
+  PointerSensor,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import type {CollisionDetection, DragEndEvent} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {CSS as DndCss} from '@dnd-kit/utilities';
+import {
   AlignLeft,
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleCheck,
   Clock3,
   FolderPlus,
@@ -14,13 +35,26 @@ import {
   Link2,
   List,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Save,
   Search,
   Trash2,
   X,
 } from 'lucide-react';
-import type {Project, Task, TaskPriority, TaskStatus} from '../../shared/types';
+import {
+  addDays,
+  addWeeks,
+  eachDayOfInterval,
+  format,
+  getISOWeek,
+  getISOWeekYear,
+  isSameDay,
+  isSameWeek,
+  startOfWeek,
+} from 'date-fns';
+import type {Project, Task, TaskPlacement, TaskPriority, TaskStatus} from '../../shared/types';
 import {commands} from '../../core/services/commands';
 
 const statuses: TaskStatus[] = ['todo', 'in_progress', 'done'];
@@ -33,10 +67,84 @@ const priorityText: Record<TaskPriority, string> = {
   P3: 'P3-低',
 };
 
-type ViewMode = 'board' | 'list';
+type ViewMode = 'board' | 'list' | 'week';
 type DrawerState =
-  | {mode: 'create'; launchStatus: TaskStatus; launchProjectId: string}
+  | {mode: 'create'; launchStatus: TaskStatus; launchProjectId: string; launchDueDate: string}
   | {mode: 'edit'; taskId: string};
+
+const TASK_VIEW_MODE_STORAGE_KEY = 'fastnote:tasks:view-mode';
+const weekStartsOn = 1 as const;
+const dayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const priorityOrder: Record<TaskPriority, number> = {P0: 0, P1: 1, P2: 2, P3: 3};
+const boardTaskDragId = (taskId: string) => `board-task:${taskId}`;
+const boardColumnDragId = (status: TaskStatus) => `board-column:${status}`;
+const weekTaskDragId = (taskId: string) => `week-task:${taskId}`;
+const weekDayDragId = (dateKey: string) => `week-day:${dateKey}`;
+const taskCollisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  const taskCollisions = pointerCollisions.filter(({id}) => String(id).includes('-task:'));
+  if (taskCollisions.length > 0) return taskCollisions;
+  return pointerCollisions.length > 0 ? pointerCollisions : closestCorners(args);
+};
+
+const readStoredViewMode = (): ViewMode => {
+  const stored = localStorage.getItem(TASK_VIEW_MODE_STORAGE_KEY);
+  return stored === 'board' || stored === 'list' || stored === 'week' ? stored : 'board';
+};
+
+const localDateKey = (date: Date) => format(date, 'yyyy-MM-dd');
+const getWeekStart = (date: Date) => startOfWeek(date, {weekStartsOn});
+
+const getIsoWeekValue = (date: Date) => {
+  const week = String(getISOWeek(date)).padStart(2, '0');
+  return `${getISOWeekYear(date)}-W${week}`;
+};
+
+const parseIsoWeekValue = (value: string) => {
+  const match = /^(\d{4})-W(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  if (week < 1 || week > 53) return null;
+  const firstIsoWeekStart = getWeekStart(new Date(year, 0, 4));
+  const result = addWeeks(firstIsoWeekStart, week - 1);
+  return getISOWeekYear(result) === year && getISOWeek(result) === week ? result : null;
+};
+
+const getMonthWeekLabel = (weekStart: Date) => {
+  const weekOfMonth = Math.floor((weekStart.getDate() - 1) / 7) + 1;
+  return `${weekStart.getFullYear()}年${weekStart.getMonth() + 1}月第${weekOfMonth}周`;
+};
+
+const getWeekRangeLabel = (weekStart: Date, weekEnd: Date) => {
+  if (weekStart.getFullYear() !== weekEnd.getFullYear()) {
+    return `${format(weekStart, 'yyyy年M月d日')}-${format(weekEnd, 'yyyy年M月d日')}`;
+  }
+  if (weekStart.getMonth() !== weekEnd.getMonth()) {
+    return `${format(weekStart, 'M月d日')}-${format(weekEnd, 'M月d日')}`;
+  }
+  return `${format(weekStart, 'M月d日')}-${format(weekEnd, 'd日')}`;
+};
+
+const sortWeekTasks = (left: Task, right: Task) => {
+  const completionDifference = Number(left.status === 'done') - Number(right.status === 'done');
+  if (completionDifference !== 0) return completionDifference;
+  const priorityDifference = priorityOrder[left.priority] - priorityOrder[right.priority];
+  if (priorityDifference !== 0) return priorityDifference;
+  return left.orderNum - right.orderNum;
+};
+
+const sortByOrderNum = (left: Task, right: Task) => {
+  const orderDifference = left.orderNum - right.orderNum;
+  return orderDifference !== 0 ? orderDifference : left.createdAt.localeCompare(right.createdAt);
+};
+
+const sortOverdueTasks = (left: Task, right: Task) => {
+  const priorityDifference = priorityOrder[left.priority] - priorityOrder[right.priority];
+  if (priorityDifference !== 0) return priorityDifference;
+  const dateDifference = left.dueDate.localeCompare(right.dueDate);
+  return dateDifference !== 0 ? dateDifference : left.orderNum - right.orderNum;
+};
 
 interface TaskDraft {
   title: string;
@@ -47,6 +155,12 @@ interface TaskDraft {
   progress: number;
   description: string;
   projectId: string;
+}
+
+interface TaskDragData {
+  surface: 'board' | 'week';
+  taskId?: string;
+  groupId: string;
 }
 
 const emptyDraft = (status: TaskStatus, projectId: string): TaskDraft => ({
@@ -98,9 +212,13 @@ export default function TasksPage({
   run: <T>(action: Promise<T>) => Promise<T>;
 }) {
   const activeProjects = useMemo(() => projects.filter((project) => !project.archivedAt), [projects]);
-  const activeTasks = useMemo(() => tasks.filter((task) => !task.archivedAt), [tasks]);
+  const persistedActiveTasks = useMemo(() => tasks.filter((task) => !task.archivedAt), [tasks]);
+  const [optimisticTasks, setOptimisticTasks] = useState<Task[] | null>(null);
+  const activeTasks = optimisticTasks ?? persistedActiveTasks;
   const [selectedProjectId, setSelectedProjectId] = useState('all');
-  const [viewMode, setViewMode] = useState<ViewMode>('board');
+  const [isProjectRailCollapsed, setIsProjectRailCollapsed] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
+  const [selectedWeekStart, setSelectedWeekStart] = useState(() => getWeekStart(new Date()));
   const [drawer, setDrawer] = useState<DrawerState | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(() => emptyDraft('todo', ''));
   const [draftBaseline, setDraftBaseline] = useState(() => serializeDraft(emptyDraft('todo', '')));
@@ -115,19 +233,62 @@ export default function TasksPage({
   const [projectMenuColor, setProjectMenuColor] = useState('#2563eb');
   const [projectMenuError, setProjectMenuError] = useState('');
   const [projectMenuPosition, setProjectMenuPosition] = useState<{left: number; top: number} | null>(null);
+  const [taskDragError, setTaskDragError] = useState('');
+  const [isReordering, setIsReordering] = useState(false);
   const projectMenuRef = useRef<HTMLElement>(null);
   const projectMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, {activationConstraint: {distance: 6}}),
+    useSensor(KeyboardSensor, {coordinateGetter: sortableKeyboardCoordinates}),
+  );
 
+  const weekDays = useMemo(
+    () => eachDayOfInterval({start: selectedWeekStart, end: addDays(selectedWeekStart, 6)}),
+    [selectedWeekStart],
+  );
+  const weekStartKey = localDateKey(selectedWeekStart);
+  const weekEndKey = localDateKey(weekDays[6]);
+  const isCurrentWeek = isSameWeek(selectedWeekStart, new Date(), {weekStartsOn});
+
+  const weekScopedTasks = useMemo(() => activeTasks.filter((task) => {
+    if (!task.dueDate) return task.status === 'todo';
+    if (task.dueDate >= weekStartKey && task.dueDate <= weekEndKey) return true;
+    return isCurrentWeek && task.dueDate < weekStartKey && task.status !== 'done';
+  }), [activeTasks, isCurrentWeek, weekEndKey, weekStartKey]);
+
+  const navigationTasks = viewMode === 'week' ? weekScopedTasks : activeTasks;
   const filteredTasks = useMemo(() => {
-    if (selectedProjectId === 'all') return activeTasks;
-    if (selectedProjectId === 'none') return activeTasks.filter((task) => !task.projectId);
-    return activeTasks.filter((task) => task.projectId === selectedProjectId);
-  }, [activeTasks, selectedProjectId]);
+    if (selectedProjectId === 'all') return navigationTasks;
+    if (selectedProjectId === 'none') return navigationTasks.filter((task) => !task.projectId);
+    return navigationTasks.filter((task) => task.projectId === selectedProjectId);
+  }, [navigationTasks, selectedProjectId]);
+
+  const datedWeekTasks = useMemo(
+    () => filteredTasks.filter((task) => task.dueDate >= weekStartKey && task.dueDate <= weekEndKey).sort(sortByOrderNum),
+    [filteredTasks, weekEndKey, weekStartKey],
+  );
+  const undatedTodoTasks = useMemo(
+    () => filteredTasks.filter((task) => !task.dueDate && task.status === 'todo').sort(sortWeekTasks),
+    [filteredTasks],
+  );
+  const overdueTasks = useMemo(
+    () => filteredTasks.filter((task) => task.dueDate && task.dueDate < weekStartKey && task.status !== 'done').sort(sortOverdueTasks),
+    [filteredTasks, weekStartKey],
+  );
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const selectedProject = activeProjects.find((project) => project.id === selectedProjectId);
+  const selectedProjectLabel = selectedProject?.name ?? (selectedProjectId === 'none' ? '未分配' : '全部任务');
   const editingTask = drawer?.mode === 'edit' ? activeTasks.find((task) => task.id === drawer.taskId) : undefined;
   const isDraftDirty = Boolean(drawer) && serializeDraft(draft) !== draftBaseline;
+
+  useEffect(() => {
+    localStorage.setItem(TASK_VIEW_MODE_STORAGE_KEY, viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    setOptimisticTasks(null);
+  }, [tasks]);
 
   useEffect(() => {
     if (!projectMenuId) return;
@@ -168,9 +329,9 @@ export default function TasksPage({
 
   const projectContextId = selectedProject ? selectedProject.id : '';
 
-  const openCreateDrawer = (status: TaskStatus = 'todo') => {
-    const nextDraft = emptyDraft(status, projectContextId);
-    setDrawer({mode: 'create', launchStatus: status, launchProjectId: projectContextId});
+  const openCreateDrawer = (status: TaskStatus = 'todo', dueDate = '') => {
+    const nextDraft = {...emptyDraft(status, projectContextId), dueDate};
+    setDrawer({mode: 'create', launchStatus: status, launchProjectId: projectContextId, launchDueDate: dueDate});
     setDraft(nextDraft);
     setDraftBaseline(serializeDraft(nextDraft));
     setDrawerError('');
@@ -228,7 +389,10 @@ export default function TasksPage({
       } else {
         await run(commands.createTask({...payload, type: 'task', labels: []}));
         if (continueAdding) {
-          const nextDraft = emptyDraft(drawer.launchStatus, drawer.launchProjectId);
+          const nextDraft = {
+            ...emptyDraft(drawer.launchStatus, drawer.launchProjectId),
+            dueDate: drawer.launchDueDate,
+          };
           setDraft(nextDraft);
           setDraftBaseline(serializeDraft(nextDraft));
           setIsProjectCreateOpen(false);
@@ -333,26 +497,196 @@ export default function TasksPage({
     setDrawerError('');
   };
 
+  const persistTaskPlacements = async (placements: TaskPlacement[]) => {
+    const placementById = new Map(placements.map((placement) => [placement.id, placement]));
+    const changedPlacements = [...placementById.values()].filter((placement) => {
+      const task = activeTasks.find((item) => item.id === placement.id);
+      return task && (
+        task.status !== placement.status
+        || task.dueDate !== placement.dueDate
+        || task.orderNum !== placement.orderNum
+      );
+    });
+    if (changedPlacements.length === 0) return;
+
+    const changedById = new Map(changedPlacements.map((placement) => [placement.id, placement]));
+    setTaskDragError('');
+    setIsReordering(true);
+    setOptimisticTasks(activeTasks.map((task) => {
+      const placement = changedById.get(task.id);
+      return placement ? {...task, ...placement} : task;
+    }));
+    try {
+      await run(commands.reorderTasks(changedPlacements));
+    } catch (error) {
+      setOptimisticTasks(null);
+      setTaskDragError(`无法保存任务位置：${errorMessage(error)}`);
+    } finally {
+      setIsReordering(false);
+    }
+  };
+
+  const handleBoardDragEnd = (event: DragEndEvent) => {
+    const activeData = event.active.data.current as TaskDragData | undefined;
+    const overData = event.over?.data.current as TaskDragData | undefined;
+    if (!event.over || activeData?.surface !== 'board' || overData?.surface !== 'board' || !activeData.taskId) return;
+
+    const activeTask = activeTasks.find((task) => task.id === activeData.taskId);
+    if (!activeTask) return;
+    const sourceStatus = activeTask.status;
+    const targetStatus = overData.groupId as TaskStatus;
+    if (!statuses.includes(targetStatus)) return;
+    const overTaskId = overData.taskId;
+    const sourceTasks = activeTasks.filter((task) => task.status === sourceStatus).sort(sortByOrderNum);
+
+    if (sourceStatus === targetStatus) {
+      const activeIndex = sourceTasks.findIndex((task) => task.id === activeTask.id);
+      const overIndex = overTaskId
+        ? sourceTasks.findIndex((task) => task.id === overTaskId)
+        : sourceTasks.length - 1;
+      if (activeIndex < 0 || overIndex < 0 || activeIndex === overIndex) return;
+      const reorderedTasks = arrayMove(sourceTasks, activeIndex, overIndex);
+      void persistTaskPlacements(reorderedTasks.map((task, index) => ({
+        id: task.id,
+        status: sourceStatus,
+        dueDate: task.dueDate,
+        orderNum: index + 1,
+      })));
+      return;
+    }
+
+    const nextSourceTasks = sourceTasks.filter((task) => task.id !== activeTask.id);
+    const nextTargetTasks = activeTasks.filter((task) => task.status === targetStatus).sort(sortByOrderNum);
+    const targetIndex = overTaskId
+      ? nextTargetTasks.findIndex((task) => task.id === overTaskId)
+      : nextTargetTasks.length;
+    nextTargetTasks.splice(targetIndex < 0 ? nextTargetTasks.length : targetIndex, 0, {...activeTask, status: targetStatus});
+    void persistTaskPlacements([
+      ...nextSourceTasks.map((task, index) => ({
+        id: task.id,
+        status: sourceStatus,
+        dueDate: task.dueDate,
+        orderNum: index + 1,
+      })),
+      ...nextTargetTasks.map((task, index) => ({
+        id: task.id,
+        status: targetStatus,
+        dueDate: task.dueDate,
+        orderNum: index + 1,
+      })),
+    ]);
+  };
+
+  const handleWeekDragEnd = (event: DragEndEvent) => {
+    const activeData = event.active.data.current as TaskDragData | undefined;
+    const overData = event.over?.data.current as TaskDragData | undefined;
+    if (!event.over || activeData?.surface !== 'week' || overData?.surface !== 'week' || !activeData.taskId) return;
+
+    const activeTask = activeTasks.find((task) => task.id === activeData.taskId);
+    if (!activeTask) return;
+    const sourceDate = activeTask.dueDate;
+    const targetDate = overData.groupId;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return;
+    const overTaskId = overData.taskId;
+    const sourceTasks = activeTasks.filter((task) => task.dueDate === sourceDate).sort(sortByOrderNum);
+
+    if (sourceDate === targetDate) {
+      const activeIndex = sourceTasks.findIndex((task) => task.id === activeTask.id);
+      const overIndex = overTaskId
+        ? sourceTasks.findIndex((task) => task.id === overTaskId)
+        : sourceTasks.length - 1;
+      if (activeIndex < 0 || overIndex < 0 || activeIndex === overIndex) return;
+      const reorderedTasks = arrayMove(sourceTasks, activeIndex, overIndex);
+      void persistTaskPlacements(reorderedTasks.map((task, index) => ({
+        id: task.id,
+        status: task.status,
+        dueDate: sourceDate,
+        orderNum: index + 1,
+      })));
+      return;
+    }
+
+    const nextSourceTasks = sourceTasks.filter((task) => task.id !== activeTask.id);
+    const nextTargetTasks = activeTasks.filter((task) => task.dueDate === targetDate).sort(sortByOrderNum);
+    const targetIndex = overTaskId
+      ? nextTargetTasks.findIndex((task) => task.id === overTaskId)
+      : nextTargetTasks.length;
+    nextTargetTasks.splice(targetIndex < 0 ? nextTargetTasks.length : targetIndex, 0, {...activeTask, dueDate: targetDate});
+    void persistTaskPlacements([
+      ...nextSourceTasks.map((task, index) => ({
+        id: task.id,
+        status: task.status,
+        dueDate: sourceDate,
+        orderNum: index + 1,
+      })),
+      ...nextTargetTasks.map((task, index) => ({
+        id: task.id,
+        status: task.status,
+        dueDate: targetDate,
+        orderNum: index + 1,
+      })),
+    ]);
+  };
+
+  const weekLabel = getMonthWeekLabel(selectedWeekStart);
+  const weekRangeLabel = getWeekRangeLabel(selectedWeekStart, weekDays[6]);
+  const weekStatusCounts = statuses.map((status) => ({
+    status,
+    count: filteredTasks.filter((task) => task.status === status).length,
+  }));
+
   return (
-    <div className="task-workspace">
-      <aside className="project-rail">
-        <div className="rail-heading">
-          <span>项目</span>
-          <strong>{activeProjects.length}</strong>
+    <div className={`task-workspace ${isProjectRailCollapsed ? 'project-rail-collapsed' : ''}`}>
+      <aside className={`project-rail ${isProjectRailCollapsed ? 'collapsed' : ''}`}>
+        {isProjectRailCollapsed ? (
+          <button
+            className="project-rail-capsule"
+            type="button"
+            title="展开项目导航"
+            aria-label={`展开项目导航，当前${selectedProjectLabel}，${filteredTasks.length}个任务`}
+            style={{
+              '--capsule-text-color': selectedProject?.color ?? (selectedProjectId === 'none' ? 'var(--text-secondary)' : 'var(--accent)'),
+            } as CSSProperties}
+            onClick={() => setIsProjectRailCollapsed(false)}
+          >
+            <PanelLeftOpen />
+            <span>{selectedProjectLabel}</span>
+            <small>{filteredTasks.length}</small>
+          </button>
+        ) : (
+          <>
+        <div className="rail-heading project-rail-heading">
+          <span className="project-rail-title">
+            <span>项目</span>
+            <strong>{activeProjects.length}</strong>
+          </span>
+          <button
+            className="project-rail-toggle"
+            type="button"
+            title="收起项目导航"
+            aria-label="收起项目导航"
+            onClick={() => {
+              setProjectMenuId(null);
+              setProjectMenuPosition(null);
+              setIsProjectRailCollapsed(true);
+            }}
+          >
+            <PanelLeftClose />
+          </button>
         </div>
         <button className={`project-filter ${selectedProjectId === 'all' ? 'active' : ''}`} type="button" onClick={() => setSelectedProjectId('all')}>
           <span className="project-color-dot neutral" />
           <span>全部任务</span>
-          <small>{activeTasks.length}</small>
+          <small>{navigationTasks.length}</small>
         </button>
         <button className={`project-filter ${selectedProjectId === 'none' ? 'active' : ''}`} type="button" onClick={() => setSelectedProjectId('none')}>
           <span className="project-color-dot muted" />
           <span>未分配</span>
-          <small>{activeTasks.filter((task) => !task.projectId).length}</small>
+          <small>{navigationTasks.filter((task) => !task.projectId).length}</small>
         </button>
         <div className="project-filter-list">
           {activeProjects.map((project) => {
-            const projectTaskCount = activeTasks.filter((task) => task.projectId === project.id).length;
+            const projectTaskCount = navigationTasks.filter((task) => task.projectId === project.id).length;
             const isMenuOpen = projectMenuId === project.id;
             return (
               <div className={`project-filter-row ${selectedProjectId === project.id ? 'active' : ''}`} key={project.id}>
@@ -395,9 +729,11 @@ export default function TasksPage({
             );
           })}
         </div>
+          </>
+        )}
       </aside>
 
-      <section className="task-main">
+      <section className={`task-main ${viewMode === 'week' ? 'week-view' : ''}`}>
         <header className="task-module-header">
           <div>
             <span className="section-label">项目任务</span>
@@ -413,6 +749,10 @@ export default function TasksPage({
                 <List />
                 列表
               </button>
+              <button className={viewMode === 'week' ? 'active' : ''} type="button" onClick={() => setViewMode('week')}>
+                <CalendarDays />
+                周日历
+              </button>
             </div>
             <button className="primary-btn task-add-record-btn" type="button" onClick={() => openCreateDrawer()}>
               <Plus />
@@ -420,37 +760,67 @@ export default function TasksPage({
             </button>
           </div>
         </header>
+        {taskDragError && <p className="task-drag-error" role="alert">{taskDragError}</p>}
 
-        {viewMode === 'board' ? (
-          <section className="task-board-scroll">
-            <div className="task-board-grid">
-              {statuses.map((status) => {
-                const statusTasks = filteredTasks.filter((task) => task.status === status);
-                return (
-                  <section className={`task-board-column status-${status}`} key={status}>
-                    <header className="task-board-column-head">
-                      <span className={`task-status-pill ${status}`}>{statusText[status]}</span>
-                      <small>{statusTasks.length}</small>
-                      <button type="button" title={`新增${statusText[status]}任务`} aria-label={`新增${statusText[status]}任务`} onClick={() => openCreateDrawer(status)}>
-                        <Plus />
-                      </button>
-                    </header>
-                    <div className="task-board-list">
-                      {statusTasks.length === 0 && <span className="task-column-empty">暂无任务</span>}
-                      {statusTasks.map((task) => (
-                        <TaskCard key={task.id} project={task.projectId ? projectById.get(task.projectId) : undefined} task={task} onOpen={() => openEditDrawer(task)} />
-                      ))}
-                    </div>
-                    <button className="task-column-add" type="button" onClick={() => openCreateDrawer(status)}>
-                      <Plus />
-                      <span>新增记录</span>
-                    </button>
-                  </section>
-                );
-              })}
+        {viewMode === 'week' && (
+          <section className="task-week-toolbar" aria-label="周日历导航">
+            <div className="task-week-navigation">
+              <button type="button" title="上一周" aria-label="上一周" onClick={() => setSelectedWeekStart((current) => addWeeks(current, -1))}>
+                <ChevronLeft />
+              </button>
+              <label className="task-week-picker">
+                <CalendarDays />
+                <strong>{weekLabel}</strong>
+                <ChevronDown />
+                <input
+                  aria-label="选择周"
+                  type="week"
+                  value={getIsoWeekValue(selectedWeekStart)}
+                  onClick={(event) => {
+                    if (event.isTrusted) event.currentTarget.showPicker();
+                  }}
+                  onChange={(event) => {
+                    const nextWeek = parseIsoWeekValue(event.target.value);
+                    if (nextWeek) setSelectedWeekStart(nextWeek);
+                  }}
+                />
+              </label>
+              <button type="button" title="下一周" aria-label="下一周" onClick={() => setSelectedWeekStart((current) => addWeeks(current, 1))}>
+                <ChevronRight />
+              </button>
+              <button className="task-week-today" type="button" disabled={isCurrentWeek} onClick={() => setSelectedWeekStart(getWeekStart(new Date()))}>
+                本周
+              </button>
+            </div>
+            <div className="task-week-summary">
+              <strong>{weekRangeLabel}</strong>
+              <span>共 {filteredTasks.length}</span>
+              {weekStatusCounts.map(({status, count}) => (
+                <span className={`task-week-status-count ${status}`} key={status}>{statusText[status]} {count}</span>
+              ))}
             </div>
           </section>
-        ) : (
+        )}
+
+        {viewMode === 'board' ? (
+          <DndContext sensors={dragSensors} collisionDetection={taskCollisionDetection} onDragEnd={handleBoardDragEnd}>
+            <section className="task-board-scroll">
+              <div className="task-board-grid">
+                {statuses.map((status) => (
+                  <BoardTaskColumn
+                    key={status}
+                    status={status}
+                    tasks={filteredTasks.filter((task) => task.status === status).sort(sortByOrderNum)}
+                    projectById={projectById}
+                    disabled={isReordering}
+                    onOpen={openEditDrawer}
+                    onAdd={() => openCreateDrawer(status)}
+                  />
+                ))}
+              </div>
+            </section>
+          </DndContext>
+        ) : viewMode === 'list' ? (
           <section className="task-data-table">
             <div className="task-data-row task-data-row-head">
               <span>任务</span>
@@ -477,6 +847,53 @@ export default function TasksPage({
               })}
             </div>
           </section>
+        ) : (
+          <DndContext sensors={dragSensors} collisionDetection={taskCollisionDetection} onDragEnd={handleWeekDragEnd}>
+          <section className="task-week-view">
+            <div className="task-week-focus-sections">
+              {isCurrentWeek && overdueTasks.length > 0 && (
+                <WeekFocusSection
+                  className="overdue"
+                  label="逾期待办"
+                  tasks={overdueTasks}
+                  projectById={projectById}
+                  onOpen={openEditDrawer}
+                />
+              )}
+              <WeekFocusSection
+                className="unscheduled"
+                label="未排期待办"
+                tasks={undatedTodoTasks}
+                projectById={projectById}
+                onOpen={openEditDrawer}
+                onAdd={() => openCreateDrawer('todo')}
+              />
+            </div>
+            <div className="task-week-calendar-scroll">
+              <div className="task-week-calendar">
+                {weekDays.map((day, dayIndex) => {
+                  const dateKey = localDateKey(day);
+                  const dayTasks = datedWeekTasks.filter((task) => task.dueDate === dateKey);
+                  return (
+                    <WeekDayColumn
+                      key={dateKey}
+                      dateKey={dateKey}
+                      dayLabel={dayLabels[dayIndex]}
+                      dateLabel={format(day, 'M月d日')}
+                      isToday={isSameDay(day, new Date())}
+                      isWeekend={dayIndex > 4}
+                      tasks={dayTasks}
+                      projectById={projectById}
+                      disabled={isReordering}
+                      onOpen={openEditDrawer}
+                      onAdd={() => openCreateDrawer('todo', dateKey)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+          </DndContext>
         )}
       </section>
 
@@ -515,7 +932,15 @@ export default function TasksPage({
                   />
                 </TaskField>
                 <TaskField icon={<CalendarDays />} label="截止日期">
-                  <input aria-label="截止日期" type="date" value={draft.dueDate} onChange={(event) => updateDraft('dueDate', event.target.value)} />
+                  <input
+                    aria-label="截止日期"
+                    type="date"
+                    value={draft.dueDate}
+                    onClick={(event) => {
+                      if (event.isTrusted) event.currentTarget.showPicker();
+                    }}
+                    onChange={(event) => updateDraft('dueDate', event.target.value)}
+                  />
                 </TaskField>
                 <TaskField icon={<Link2 />} label="父任务">
                   <select aria-label="父任务" value={draft.parentId} onChange={(event) => updateDraft('parentId', event.target.value)}>
@@ -606,9 +1031,82 @@ export default function TasksPage({
   );
 }
 
-function TaskCard({task, project, onOpen}: {task: Task; project?: Project; onOpen: () => void}) {
+function BoardTaskColumn({
+  status,
+  tasks,
+  projectById,
+  disabled,
+  onOpen,
+  onAdd,
+}: {
+  status: TaskStatus;
+  tasks: Task[];
+  projectById: Map<string, Project>;
+  disabled: boolean;
+  onOpen: (task: Task) => void;
+  onAdd: () => void;
+}) {
+  const {setNodeRef, isOver} = useDroppable({
+    id: boardColumnDragId(status),
+    data: {surface: 'board', groupId: status} satisfies TaskDragData,
+    disabled,
+  });
+
   return (
-    <button className="task-board-card" type="button" onClick={onOpen}>
+    <section className={`task-board-column status-${status} ${isOver ? 'drag-over' : ''}`}>
+      <header className="task-board-column-head">
+        <span className={`task-status-pill ${status}`}>{statusText[status]}</span>
+        <small>{tasks.length}</small>
+        <button type="button" title={`新增${statusText[status]}任务`} aria-label={`新增${statusText[status]}任务`} onClick={onAdd}>
+          <Plus />
+        </button>
+      </header>
+      <SortableContext items={tasks.map((task) => boardTaskDragId(task.id))} strategy={verticalListSortingStrategy}>
+        <div ref={setNodeRef} className="task-board-list">
+          {tasks.length === 0 && <span className="task-column-empty">暂无任务</span>}
+          {tasks.map((task) => (
+            <SortableBoardTaskCard
+              key={task.id}
+              task={task}
+              project={task.projectId ? projectById.get(task.projectId) : undefined}
+              disabled={disabled}
+              onOpen={() => onOpen(task)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+      <button className="task-column-add" type="button" onClick={onAdd}>
+        <Plus />
+        <span>新增记录</span>
+      </button>
+    </section>
+  );
+}
+
+function SortableBoardTaskCard({task, project, disabled, onOpen}: {task: Task; project?: Project; disabled: boolean; onOpen: () => void}) {
+  const {attributes, listeners, setNodeRef, transform, transition, isDragging} = useSortable({
+    id: boardTaskDragId(task.id),
+    data: {surface: 'board', taskId: task.id, groupId: task.status} satisfies TaskDragData,
+    disabled,
+  });
+  const style: CSSProperties = {
+    transform: DndCss.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.55 : 1,
+    zIndex: isDragging ? 3 : undefined,
+  };
+
+  return (
+    <button
+      ref={setNodeRef}
+      className={`task-board-card task-sortable-card ${isDragging ? 'dragging' : ''}`}
+      type="button"
+      title="拖动调整顺序或状态"
+      style={style}
+      onClick={onOpen}
+      {...attributes}
+      {...listeners}
+    >
       <strong>{task.title}</strong>
       <div className="task-card-pills">
         <span className={`task-status-pill ${task.status}`}>{statusText[task.status]}</span>
@@ -620,6 +1118,150 @@ function TaskCard({task, project, onOpen}: {task: Task; project?: Project; onOpe
         {task.dueDate || '未设置截止日期'}
       </span>
     </button>
+  );
+}
+
+function WeekDayColumn({
+  dateKey,
+  dayLabel,
+  dateLabel,
+  isToday,
+  isWeekend,
+  tasks,
+  projectById,
+  disabled,
+  onOpen,
+  onAdd,
+}: {
+  dateKey: string;
+  dayLabel: string;
+  dateLabel: string;
+  isToday: boolean;
+  isWeekend: boolean;
+  tasks: Task[];
+  projectById: Map<string, Project>;
+  disabled: boolean;
+  onOpen: (task: Task) => void;
+  onAdd: () => void;
+}) {
+  const {setNodeRef, isOver} = useDroppable({
+    id: weekDayDragId(dateKey),
+    data: {surface: 'week', groupId: dateKey} satisfies TaskDragData,
+    disabled,
+  });
+
+  return (
+    <section className={`task-week-day ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${isOver ? 'drag-over' : ''}`}>
+      <header className="task-week-day-header">
+        <span>
+          <small>{dayLabel}</small>
+          <strong>{dateLabel}</strong>
+        </span>
+        <span className="task-week-day-actions">
+          <small>{tasks.length}</small>
+          <button type="button" title={`在${dateLabel}新增任务`} aria-label={`在${dateLabel}新增任务`} onClick={onAdd}>
+            <Plus />
+          </button>
+        </span>
+      </header>
+      <SortableContext items={tasks.map((task) => weekTaskDragId(task.id))} strategy={verticalListSortingStrategy}>
+        <div ref={setNodeRef} className="task-week-day-list">
+          {tasks.length === 0 && <span className="task-week-day-empty">暂无任务</span>}
+          {tasks.map((task) => (
+            <SortableWeekTaskCard
+              key={task.id}
+              task={task}
+              project={task.projectId ? projectById.get(task.projectId) : undefined}
+              disabled={disabled}
+              onOpen={() => onOpen(task)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </section>
+  );
+}
+
+function SortableWeekTaskCard({task, project, disabled, onOpen}: {task: Task; project?: Project; disabled: boolean; onOpen: () => void}) {
+  const {attributes, listeners, setNodeRef, transform, transition, isDragging} = useSortable({
+    id: weekTaskDragId(task.id),
+    data: {surface: 'week', taskId: task.id, groupId: task.dueDate} satisfies TaskDragData,
+    disabled,
+  });
+  const style: CSSProperties = {
+    transform: DndCss.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.55 : 1,
+    zIndex: isDragging ? 3 : undefined,
+  };
+
+  return (
+    <button
+      ref={setNodeRef}
+      className={`task-week-card task-sortable-card ${task.status === 'done' ? 'completed' : ''} ${isDragging ? 'dragging' : ''}`}
+      type="button"
+      title="拖动调整顺序或截止日期"
+      style={style}
+      onClick={onOpen}
+      {...attributes}
+      {...listeners}
+    >
+      <strong>{task.title}</strong>
+      <span className="task-week-card-pills">
+        <span className={`task-status-pill ${task.status}`}>{statusText[task.status]}</span>
+        <PriorityPill priority={task.priority} />
+      </span>
+      {project && <ProjectToken project={project} />}
+    </button>
+  );
+}
+
+function WeekFocusSection({
+  className,
+  label,
+  tasks,
+  projectById,
+  onOpen,
+  onAdd,
+}: {
+  className: 'overdue' | 'unscheduled';
+  label: string;
+  tasks: Task[];
+  projectById: Map<string, Project>;
+  onOpen: (task: Task) => void;
+  onAdd?: () => void;
+}) {
+  return (
+    <section className={`task-week-focus-row ${className}`}>
+      <header>
+        <span>
+          <strong>{label}</strong>
+          <small>{tasks.length}</small>
+        </span>
+        {onAdd && (
+          <button type="button" title={`新增${label}`} aria-label={`新增${label}`} onClick={onAdd}>
+            <Plus />
+          </button>
+        )}
+      </header>
+      <div className="task-week-focus-list">
+        {tasks.length === 0 && <span className="task-week-focus-empty">暂无{label}</span>}
+        {tasks.map((task) => {
+          const project = task.projectId ? projectById.get(task.projectId) : undefined;
+          return (
+            <button className="task-week-focus-card" type="button" key={task.id} onClick={() => onOpen(task)}>
+              <strong>{task.title}</strong>
+              <span>
+                <span className={`task-status-pill ${task.status}`}>{statusText[task.status]}</span>
+                <PriorityPill priority={task.priority} />
+                {project && <ProjectToken project={project} />}
+                {task.dueDate && <small>{task.dueDate}</small>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

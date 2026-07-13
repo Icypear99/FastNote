@@ -7,6 +7,7 @@ import type {
   Project,
   Settings,
   Task,
+  TaskPlacement,
   TaskStatus,
   UserProfile,
   WorkspaceSnapshot,
@@ -272,6 +273,20 @@ export const localDb = {
   },
   async moveTask(idValue: string, status: TaskStatus) {
     return localDb.updateTask({id: idValue, status});
+  },
+  async reorderTasks(placements: TaskPlacement[]) {
+    const snapshot = readSnapshot();
+    const taskIds = new Set(snapshot.tasks.map((task) => task.id));
+    if (placements.some((placement) => !taskIds.has(placement.id))) {
+      throw new Error('待排序任务不存在');
+    }
+    const placementById = new Map(placements.map((placement) => [placement.id, placement]));
+    const updatedAt = now();
+    snapshot.tasks = snapshot.tasks.map((task) => {
+      const placement = placementById.get(task.id);
+      return placement ? {...task, ...placement, updatedAt} : task;
+    });
+    writeSnapshot(snapshot);
   },
   async createEssayCategory(input: Partial<EssayCategory>) {
     const snapshot = readSnapshot();

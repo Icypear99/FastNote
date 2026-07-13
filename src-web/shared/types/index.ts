@@ -52,6 +52,13 @@ export interface Task {
   updatedAt: string;
 }
 
+export interface TaskPlacement {
+  id: string;
+  status: TaskStatus;
+  dueDate: string;
+  orderNum: number;
+}
+
 export interface EssayCategory {
   id: string;
   name: string;

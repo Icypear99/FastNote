@@ -200,6 +200,15 @@ struct TaskPatch {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TaskPlacement {
+    id: String,
+    status: String,
+    due_date: String,
+    order_num: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct EssayCategoryPatch {
     id: Option<String>,
     name: Option<String>,
@@ -608,6 +617,25 @@ fn task_move(state: State<AppState>, id: String, status: String) -> Result<Task,
             archived_at: None,
         },
     )
+}
+
+#[tauri::command]
+fn tasks_reorder(state: State<AppState>, placements: Vec<TaskPlacement>) -> Result<(), String> {
+    let mut conn = open_db(&state)?;
+    let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    let timestamp = now();
+    for placement in placements {
+        let updated = transaction
+            .execute(
+                "UPDATE tasks SET status = ?1, due_date = ?2, order_num = ?3, updated_at = ?4 WHERE id = ?5",
+                params![placement.status, placement.due_date, placement.order_num, timestamp, placement.id],
+            )
+            .map_err(|error| error.to_string())?;
+        if updated == 0 {
+            return Err("待排序任务不存在".to_string());
+        }
+    }
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1266,6 +1294,7 @@ fn main() {
             task_create,
             task_update,
             task_move,
+            tasks_reorder,
             task_archive,
             essay_category_create,
             essay_category_update,
