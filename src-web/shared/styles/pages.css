@@ -1496,7 +1496,7 @@
   max-width: calc(100% - 28px);
   position: absolute;
   top: calc(100% + 6px);
-  width: 720px;
+  width: 620px;
   z-index: 30;
 }
 
@@ -1573,7 +1573,7 @@
   align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: 28px minmax(130px, 1fr) 116px minmax(170px, 1.25fr) 28px;
+  grid-template-columns: 28px 168px 104px minmax(180px, 1fr) 28px;
 }
 
 .task-filter-joiner {
@@ -2885,6 +2885,7 @@ button.task-data-row:hover {
   .task-filter-condition > input,
   .task-filter-condition > select:nth-of-type(3) {
     grid-column: 2 / 4;
+    max-width: 280px;
   }
 
   .task-filter-remove {
