@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import type {CSSProperties, MouseEvent} from 'react';
+import type {CSSProperties, MouseEvent, RefObject} from 'react';
 import {createPortal} from 'react-dom';
 import {
   closestCorners,
@@ -29,6 +29,7 @@ import {
   ChevronRight,
   CircleCheck,
   Clock3,
+  Filter,
   FolderPlus,
   Gauge,
   LayoutGrid,
@@ -68,6 +69,8 @@ const priorityText: Record<TaskPriority, string> = {
 };
 
 type ViewMode = 'board' | 'list' | 'week';
+type TaskFilterField = 'title' | 'status' | 'priority' | 'dueDate' | 'progress' | 'description' | 'projectId';
+type TaskFilterOperator = 'contains' | 'not_contains' | 'equals' | 'not_equals' | 'before' | 'after' | 'gte' | 'lte';
 type DrawerState =
   | {mode: 'create'; launchStatus: TaskStatus; launchProjectId: string; launchDueDate: string}
   | {mode: 'edit'; taskId: string};
@@ -163,6 +166,97 @@ interface TaskDragData {
   groupId: string;
 }
 
+interface TaskFilterCondition {
+  id: string;
+  field: TaskFilterField;
+  operator: TaskFilterOperator;
+  value: string;
+}
+
+interface TaskFilterOption<T extends string> {
+  value: T;
+  label: string;
+}
+
+const taskFilterFields: TaskFilterOption<TaskFilterField>[] = [
+  {value: 'title', label: '任务名称'},
+  {value: 'status', label: '状态'},
+  {value: 'priority', label: '优先级'},
+  {value: 'dueDate', label: '截止日期'},
+  {value: 'progress', label: '进度'},
+  {value: 'description', label: '备注'},
+  {value: 'projectId', label: '所属项目'},
+];
+
+const textFilterOperators: TaskFilterOption<TaskFilterOperator>[] = [
+  {value: 'contains', label: '包含'},
+  {value: 'not_contains', label: '不包含'},
+  {value: 'equals', label: '等于'},
+  {value: 'not_equals', label: '不等于'},
+];
+
+const selectFilterOperators: TaskFilterOption<TaskFilterOperator>[] = [
+  {value: 'equals', label: '等于'},
+  {value: 'not_equals', label: '不等于'},
+];
+
+const dateFilterOperators: TaskFilterOption<TaskFilterOperator>[] = [
+  {value: 'equals', label: '等于'},
+  {value: 'before', label: '早于'},
+  {value: 'after', label: '晚于'},
+];
+
+const numberFilterOperators: TaskFilterOption<TaskFilterOperator>[] = [
+  {value: 'equals', label: '等于'},
+  {value: 'gte', label: '大于等于'},
+  {value: 'lte', label: '小于等于'},
+];
+
+const getTaskFilterOperators = (field: TaskFilterField) => {
+  if (field === 'dueDate') return dateFilterOperators;
+  if (field === 'progress') return numberFilterOperators;
+  if (field === 'status' || field === 'priority' || field === 'projectId') return selectFilterOperators;
+  return textFilterOperators;
+};
+
+const createTaskFilterCondition = (): TaskFilterCondition => ({
+  id: crypto.randomUUID(),
+  field: 'title',
+  operator: 'contains',
+  value: '',
+});
+
+const taskMatchesFilter = (task: Task, condition: TaskFilterCondition) => {
+  const value = condition.value.trim();
+  if (!value) return true;
+
+  if (condition.field === 'progress') {
+    const expected = Number(value);
+    if (!Number.isFinite(expected)) return true;
+    if (condition.operator === 'gte') return task.progress >= expected;
+    if (condition.operator === 'lte') return task.progress <= expected;
+    return task.progress === expected;
+  }
+
+  if (condition.field === 'dueDate') {
+    if (!task.dueDate) return condition.operator === 'not_equals';
+    if (condition.operator === 'before') return task.dueDate < value;
+    if (condition.operator === 'after') return task.dueDate > value;
+    if (condition.operator === 'not_equals') return task.dueDate !== value;
+    return task.dueDate === value;
+  }
+
+  const actual = condition.field === 'projectId'
+    ? task.projectId ?? 'none'
+    : String(task[condition.field] ?? '');
+  const normalizedActual = actual.toLocaleLowerCase('zh-CN');
+  const normalizedValue = value.toLocaleLowerCase('zh-CN');
+  if (condition.operator === 'contains') return normalizedActual.includes(normalizedValue);
+  if (condition.operator === 'not_contains') return !normalizedActual.includes(normalizedValue);
+  if (condition.operator === 'not_equals') return actual !== value;
+  return actual === value;
+};
+
 const emptyDraft = (status: TaskStatus, projectId: string): TaskDraft => ({
   title: '',
   status,
@@ -235,8 +329,13 @@ export default function TasksPage({
   const [projectMenuPosition, setProjectMenuPosition] = useState<{left: number; top: number} | null>(null);
   const [taskDragError, setTaskDragError] = useState('');
   const [isReordering, setIsReordering] = useState(false);
+  const [filterConditions, setFilterConditions] = useState<TaskFilterCondition[]>([]);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isBoardListWeekScoped, setIsBoardListWeekScoped] = useState(false);
   const projectMenuRef = useRef<HTMLElement>(null);
   const projectMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const filterPopoverRef = useRef<HTMLElement>(null);
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
   const dragSensors = useSensors(
     useSensor(PointerSensor, {activationConstraint: {distance: 6}}),
     useSensor(KeyboardSensor, {coordinateGetter: sortableKeyboardCoordinates}),
@@ -256,7 +355,16 @@ export default function TasksPage({
     return isCurrentWeek && task.dueDate < weekStartKey && task.status !== 'done';
   }), [activeTasks, isCurrentWeek, weekEndKey, weekStartKey]);
 
-  const navigationTasks = viewMode === 'week' ? weekScopedTasks : activeTasks;
+  const isWeekScopeActive = viewMode === 'week' || isBoardListWeekScoped;
+  const timeScopedTasks = isWeekScopeActive ? weekScopedTasks : activeTasks;
+  const activeFilterConditions = useMemo(
+    () => filterConditions.filter((condition) => condition.value.trim()),
+    [filterConditions],
+  );
+  const navigationTasks = useMemo(
+    () => timeScopedTasks.filter((task) => activeFilterConditions.every((condition) => taskMatchesFilter(task, condition))),
+    [activeFilterConditions, timeScopedTasks],
+  );
   const filteredTasks = useMemo(() => {
     if (selectedProjectId === 'all') return navigationTasks;
     if (selectedProjectId === 'none') return navigationTasks.filter((task) => !task.projectId);
@@ -310,6 +418,29 @@ export default function TasksPage({
       window.removeEventListener('resize', closeOnViewportChange);
     };
   }, [projectMenuId]);
+
+  useEffect(() => {
+    if (!isFilterOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node
+        && !filterPopoverRef.current?.contains(target)
+        && !filterTriggerRef.current?.contains(target)
+      ) {
+        setIsFilterOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFilterOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isFilterOpen]);
 
   useEffect(() => {
     if (!drawer) return;
@@ -628,12 +759,44 @@ export default function TasksPage({
     ]);
   };
 
+  const toggleFilterPopover = () => {
+    if (!isFilterOpen && filterConditions.length === 0) {
+      setFilterConditions([createTaskFilterCondition()]);
+    }
+    setIsFilterOpen((current) => !current);
+  };
+
+  const updateFilterCondition = (id: string, patch: Partial<TaskFilterCondition>) => {
+    setFilterConditions((current) => current.map((condition) =>
+      condition.id === id ? {...condition, ...patch} : condition,
+    ));
+  };
+
+  const updateFilterField = (id: string, field: TaskFilterField) => {
+    const operator = getTaskFilterOperators(field)[0].value;
+    updateFilterCondition(id, {field, operator, value: ''});
+  };
+
+  const addFilterCondition = () => {
+    setFilterConditions((current) => [...current, createTaskFilterCondition()]);
+  };
+
+  const removeFilterCondition = (id: string) => {
+    setFilterConditions((current) => current.filter((condition) => condition.id !== id));
+  };
+
+  const moveBoardListWeek = (offset: number) => {
+    setSelectedWeekStart((current) => addWeeks(current, offset));
+    setIsBoardListWeekScoped(true);
+  };
+
+  const selectCurrentWeek = () => {
+    setSelectedWeekStart(getWeekStart(new Date()));
+    setIsBoardListWeekScoped(true);
+  };
+
   const weekLabel = getMonthWeekLabel(selectedWeekStart);
   const weekRangeLabel = getWeekRangeLabel(selectedWeekStart, weekDays[6]);
-  const weekStatusCounts = statuses.map((status) => ({
-    status,
-    count: filteredTasks.filter((task) => task.status === status).length,
-  }));
 
   return (
     <div className={`task-workspace ${isProjectRailCollapsed ? 'project-rail-collapsed' : ''}`}>
@@ -762,9 +925,57 @@ export default function TasksPage({
         </header>
         {taskDragError && <p className="task-drag-error" role="alert">{taskDragError}</p>}
 
-        {viewMode === 'week' && (
-          <section className="task-week-toolbar" aria-label="周日历导航">
-            <div className="task-week-navigation">
+        <section className="task-filter-toolbar" aria-label="任务筛选工具栏">
+          <div className="task-filter-toolbar-left">
+            <button
+              ref={filterTriggerRef}
+              className={`task-filter-trigger ${activeFilterConditions.length > 0 ? 'active' : ''}`}
+              type="button"
+              aria-expanded={isFilterOpen}
+              aria-haspopup="dialog"
+              onClick={toggleFilterPopover}
+            >
+              <Filter />
+              筛选
+              {activeFilterConditions.length > 0 && <small>{activeFilterConditions.length}</small>}
+              <ChevronDown />
+            </button>
+            {activeFilterConditions.length > 0 && (
+              <>
+                <span className="task-filter-result">显示 {filteredTasks.length} 条</span>
+                <button className="task-filter-clear" type="button" onClick={() => setFilterConditions([])}>清空</button>
+              </>
+            )}
+          </div>
+          {viewMode !== 'week' && (
+            <div className={`task-list-week-filter ${isBoardListWeekScoped ? 'active' : ''}`} aria-label="任务周范围">
+              <span>{isBoardListWeekScoped ? weekRangeLabel : '全部时间'}</span>
+              <button type="button" title="上一周" aria-label="上一周任务" onClick={() => moveBoardListWeek(-1)}>
+                <ChevronLeft />
+              </button>
+              <button className="task-list-week-current" type="button" onClick={selectCurrentWeek}>
+                {!isBoardListWeekScoped || isCurrentWeek ? '本周' : weekLabel}
+              </button>
+              <button type="button" title="下一周" aria-label="下一周任务" onClick={() => moveBoardListWeek(1)}>
+                <ChevronRight />
+              </button>
+              {isBoardListWeekScoped && (
+                <button
+                  type="button"
+                  title="显示全部时间"
+                  aria-label="取消周筛选"
+                  onClick={() => {
+                    setIsBoardListWeekScoped(false);
+                    setSelectedWeekStart(getWeekStart(new Date()));
+                  }}
+                >
+                  <X />
+                </button>
+              )}
+            </div>
+          )}
+          {viewMode === 'week' && (
+            <div className="task-week-navigation" aria-label="周日历导航">
               <button type="button" title="上一周" aria-label="上一周" onClick={() => setSelectedWeekStart((current) => addWeeks(current, -1))}>
                 <ChevronLeft />
               </button>
@@ -792,15 +1003,21 @@ export default function TasksPage({
                 本周
               </button>
             </div>
-            <div className="task-week-summary">
-              <strong>{weekRangeLabel}</strong>
-              <span>共 {filteredTasks.length}</span>
-              {weekStatusCounts.map(({status, count}) => (
-                <span className={`task-week-status-count ${status}`} key={status}>{statusText[status]} {count}</span>
-              ))}
-            </div>
-          </section>
-        )}
+          )}
+          {isFilterOpen && (
+            <TaskFilterPopover
+              rootRef={filterPopoverRef}
+              conditions={filterConditions}
+              projects={activeProjects}
+              onAdd={addFilterCondition}
+              onRemove={removeFilterCondition}
+              onFieldChange={updateFilterField}
+              onChange={updateFilterCondition}
+              onClear={() => setFilterConditions([])}
+              onClose={() => setIsFilterOpen(false)}
+            />
+          )}
+        </section>
 
         {viewMode === 'board' ? (
           <DndContext sensors={dragSensors} collisionDetection={taskCollisionDetection} onDragEnd={handleBoardDragEnd}>
@@ -860,14 +1077,16 @@ export default function TasksPage({
                   onOpen={openEditDrawer}
                 />
               )}
-              <WeekFocusSection
-                className="unscheduled"
-                label="未排期待办"
-                tasks={undatedTodoTasks}
-                projectById={projectById}
-                onOpen={openEditDrawer}
-                onAdd={() => openCreateDrawer('todo')}
-              />
+              {undatedTodoTasks.length > 0 && (
+                <WeekFocusSection
+                  className="unscheduled"
+                  label="未排期待办"
+                  tasks={undatedTodoTasks}
+                  projectById={projectById}
+                  onOpen={openEditDrawer}
+                  onAdd={() => openCreateDrawer('todo')}
+                />
+              )}
             </div>
             <div className="task-week-calendar-scroll">
               <div className="task-week-calendar">
@@ -1028,6 +1247,144 @@ export default function TasksPage({
         </section>
       )}
     </div>
+  );
+}
+
+function TaskFilterPopover({
+  rootRef,
+  conditions,
+  projects,
+  onAdd,
+  onRemove,
+  onFieldChange,
+  onChange,
+  onClear,
+  onClose,
+}: {
+  rootRef: RefObject<HTMLElement | null>;
+  conditions: TaskFilterCondition[];
+  projects: Project[];
+  onAdd: () => void;
+  onRemove: (id: string) => void;
+  onFieldChange: (id: string, field: TaskFilterField) => void;
+  onChange: (id: string, patch: Partial<TaskFilterCondition>) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <section ref={rootRef} className="task-filter-popover" role="dialog" aria-label="任务筛选">
+      <header className="task-filter-popover-header">
+        <span>
+          <Filter />
+          <strong>筛选条件</strong>
+          <small>同时满足以下条件</small>
+        </span>
+        <button type="button" title="关闭筛选" aria-label="关闭筛选" onClick={onClose}><X /></button>
+      </header>
+      <div className="task-filter-condition-list">
+        {conditions.length === 0 && <span className="task-filter-empty">尚未添加筛选条件</span>}
+        {conditions.map((condition, index) => (
+          <div className="task-filter-condition" key={condition.id}>
+            <span className="task-filter-joiner">{index === 0 ? '当' : '且'}</span>
+            <select
+              aria-label={`筛选字段 ${index + 1}`}
+              value={condition.field}
+              onChange={(event) => onFieldChange(condition.id, event.target.value as TaskFilterField)}
+            >
+              {taskFilterFields.map((field) => <option value={field.value} key={field.value}>{field.label}</option>)}
+            </select>
+            <select
+              aria-label={`筛选方式 ${index + 1}`}
+              value={condition.operator}
+              onChange={(event) => onChange(condition.id, {operator: event.target.value as TaskFilterOperator})}
+            >
+              {getTaskFilterOperators(condition.field).map((operator) => (
+                <option value={operator.value} key={operator.value}>{operator.label}</option>
+              ))}
+            </select>
+            <TaskFilterValueControl
+              condition={condition}
+              projects={projects}
+              ariaLabel={`筛选值 ${index + 1}`}
+              onChange={(value) => onChange(condition.id, {value})}
+            />
+            <button className="task-filter-remove" type="button" title="删除条件" aria-label={`删除筛选条件 ${index + 1}`} onClick={() => onRemove(condition.id)}>
+              <Trash2 />
+            </button>
+          </div>
+        ))}
+        <button className="task-filter-add" type="button" onClick={onAdd}>
+          <Plus />
+          添加条件
+        </button>
+      </div>
+      <footer className="task-filter-popover-footer">
+        <button type="button" disabled={conditions.length === 0} onClick={onClear}>重置</button>
+        <button className="primary-btn" type="button" onClick={onClose}>完成</button>
+      </footer>
+    </section>
+  );
+}
+
+function TaskFilterValueControl({
+  condition,
+  projects,
+  ariaLabel,
+  onChange,
+}: {
+  condition: TaskFilterCondition;
+  projects: Project[];
+  ariaLabel: string;
+  onChange: (value: string) => void;
+}) {
+  if (condition.field === 'status') {
+    return (
+      <select aria-label={ariaLabel} value={condition.value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">请选择状态</option>
+        {statuses.map((status) => <option value={status} key={status}>{statusText[status]}</option>)}
+      </select>
+    );
+  }
+  if (condition.field === 'priority') {
+    return (
+      <select aria-label={ariaLabel} value={condition.value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">请选择优先级</option>
+        {priorities.map((priority) => <option value={priority} key={priority}>{priorityText[priority]}</option>)}
+      </select>
+    );
+  }
+  if (condition.field === 'projectId') {
+    return (
+      <select aria-label={ariaLabel} value={condition.value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">请选择项目</option>
+        <option value="none">未分配项目</option>
+        {projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
+      </select>
+    );
+  }
+  if (condition.field === 'dueDate') {
+    return (
+      <input
+        aria-label={ariaLabel}
+        type="date"
+        value={condition.value}
+        onClick={(event) => {
+          if (event.isTrusted) event.currentTarget.showPicker();
+        }}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    );
+  }
+  if (condition.field === 'progress') {
+    return <input aria-label={ariaLabel} type="number" min="0" max="100" value={condition.value} placeholder="0-100" onChange={(event) => onChange(event.target.value)} />;
+  }
+  return (
+    <input
+      aria-label={ariaLabel}
+      value={condition.value}
+      placeholder={condition.field === 'title' ? '输入任务名称' : '输入备注关键词'}
+      onChange={(event) => onChange(event.target.value)}
+    />
   );
 }
 
