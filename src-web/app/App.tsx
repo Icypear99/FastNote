@@ -5,7 +5,6 @@ import {
   BookOpenText,
   BriefcaseBusiness,
   CalendarDays,
-  CircleCheck,
   CircleHelp,
   Home,
   LogOut,
@@ -28,6 +27,7 @@ import SettingsDialog, {AvatarImage} from '../features/settings/SettingsPage';
 import {commands, isTauriRuntime} from '../core/services/commands';
 import {useUiStore} from './stores/uiStore';
 import type {PanelKey, ThemeMode, WorkspaceSnapshot} from '../shared/types';
+import {useAppFeedback} from '../shared/components/feedback';
 
 const panelMeta: Record<PanelKey, {title: string; icon: typeof Home}> = {
   dashboard: {title: '工作台', icon: Home},
@@ -58,6 +58,7 @@ function formatDateTime(date: Date) {
 
 export default function App() {
   const {activePanel, setActivePanel} = useUiStore();
+  const feedback = useAppFeedback();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
   const [themePreview, setThemePreview] = useState<ThemeMode | null>(null);
   const [error, setError] = useState('');
@@ -66,7 +67,6 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<'account' | 'system' | 'model' | 'shortcuts' | 'help'>('account');
   const [workspacePath, setWorkspacePath] = useState('');
-  const [toast, setToast] = useState<{title?: string; message: string; tone?: 'success'} | null>(null);
   const globalSearchRef = useRef<HTMLInputElement>(null);
   const profileMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const profileMenuRef = useRef<HTMLElement>(null);
@@ -160,7 +160,7 @@ export default function App() {
     if (activePanel === 'dashboard') return <DashboardPage snapshot={snapshot} onNavigate={setActivePanel} />;
     if (activePanel === 'tasks') return <TasksPage projects={snapshot.projects} tasks={snapshot.tasks} run={run} />;
     if (activePanel === 'essays') {
-      return <EssaysPage essays={snapshot.essays} categories={snapshot.essayCategories} run={run} />;
+      return <EssaysPage essays={snapshot.essays} run={run} />;
     }
     if (activePanel === 'tools') return <ToolsPage />;
     if (activePanel === 'assistant') {
@@ -184,8 +184,7 @@ export default function App() {
 
   const showLocalLogoutMessage = () => {
     setIsProfileMenuOpen(false);
-    setToast({message: '当前是本地免登录模式，无需退出登录。'});
-    window.setTimeout(() => setToast(null), 2400);
+    feedback.info('当前是本地免登录模式，无需退出登录。', 'local-login-mode');
   };
 
   const minimize = async (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -271,7 +270,7 @@ export default function App() {
                 <CircleHelp />
                 <span>帮助与反馈</span>
               </button>
-              <button type="button" onClick={() => setToast({message: '当前已经是最新版本。'})}>
+              <button type="button" onClick={() => feedback.info('当前已经是最新版本。', 'app-update-status')}>
                 <RefreshCw />
                 <span>检查更新</span>
               </button>
@@ -341,23 +340,13 @@ export default function App() {
           run={run}
           onThemePreview={setThemePreview}
           onSaveSuccess={({title, message}) => {
-            setToast({title, message, tone: 'success'});
-            window.setTimeout(() => setToast(null), 3200);
+            feedback.success(`${title}：${message}`, 'settings-save-success');
           }}
           onClose={() => {
             setThemePreview(null);
             setIsSettingsOpen(false);
           }}
         />
-      )}
-      {toast && (
-        <div className={`app-toast ${toast.tone === 'success' ? 'app-toast-success' : ''}`} role="status" aria-live="polite">
-          {toast.tone === 'success' && <CircleCheck aria-hidden="true" />}
-          <span className="app-toast-copy">
-            {toast.title && <strong>{toast.title}</strong>}
-            <span>{toast.message}</span>
-          </span>
-        </div>
       )}
     </div>
   );

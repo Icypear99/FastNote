@@ -39,6 +39,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  RotateCcw,
   Save,
   Search,
   Trash2,
@@ -57,6 +58,15 @@ import {
 } from 'date-fns';
 import type {Project, Task, TaskPlacement, TaskPriority, TaskStatus} from '../../shared/types';
 import {commands} from '../../core/services/commands';
+import {Badge} from '@astryxdesign/core/Badge';
+import {Banner} from '@astryxdesign/core/Banner';
+import {Button} from '@astryxdesign/core/Button';
+import {EmptyState} from '@astryxdesign/core/EmptyState';
+import {HStack} from '@astryxdesign/core/HStack';
+import {Item} from '@astryxdesign/core/Item';
+import {Tab, TabList} from '@astryxdesign/core/TabList';
+import {VStack} from '@astryxdesign/core/VStack';
+import {AppConfirmDialog, useAppFeedback} from '../../shared/components/feedback';
 
 const statuses: TaskStatus[] = ['todo', 'in_progress', 'done'];
 const statusText: Record<TaskStatus, string> = {todo: '待办', in_progress: '进行中', done: '已完成'};
@@ -69,6 +79,7 @@ const priorityText: Record<TaskPriority, string> = {
 };
 
 type ViewMode = 'board' | 'list' | 'week';
+type TrashTab = 'projects' | 'tasks';
 type TaskFilterField = 'title' | 'status' | 'priority' | 'dueDate' | 'progress' | 'description' | 'projectId';
 type TaskFilterOperator = 'contains' | 'not_contains' | 'equals' | 'not_equals' | 'before' | 'after' | 'gte' | 'lte';
 type DrawerState =
@@ -148,6 +159,10 @@ const sortOverdueTasks = (left: Task, right: Task) => {
   const dateDifference = left.dueDate.localeCompare(right.dueDate);
   return dateDifference !== 0 ? dateDifference : left.orderNum - right.orderNum;
 };
+
+function sortByArchivedAt(left: {archivedAt?: string}, right: {archivedAt?: string}) {
+  return Date.parse(right.archivedAt ?? '') - Date.parse(left.archivedAt ?? '');
+}
 
 interface TaskDraft {
   title: string;
@@ -305,11 +320,21 @@ export default function TasksPage({
   tasks: Task[];
   run: <T>(action: Promise<T>) => Promise<T>;
 }) {
+  const feedback = useAppFeedback();
   const activeProjects = useMemo(() => projects.filter((project) => !project.archivedAt), [projects]);
+  const archivedProjects = useMemo(
+    () => projects.filter((project) => project.archivedAt).sort(sortByArchivedAt),
+    [projects],
+  );
   const persistedActiveTasks = useMemo(() => tasks.filter((task) => !task.archivedAt), [tasks]);
+  const archivedTasks = useMemo(
+    () => tasks.filter((task) => task.archivedAt).sort(sortByArchivedAt),
+    [tasks],
+  );
   const [optimisticTasks, setOptimisticTasks] = useState<Task[] | null>(null);
   const activeTasks = optimisticTasks ?? persistedActiveTasks;
   const [selectedProjectId, setSelectedProjectId] = useState('all');
+  const [trashTab, setTrashTab] = useState<TrashTab>('projects');
   const [isProjectRailCollapsed, setIsProjectRailCollapsed] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
   const [selectedWeekStart, setSelectedWeekStart] = useState(() => getWeekStart(new Date()));
@@ -319,6 +344,10 @@ export default function TasksPage({
   const [drawerError, setDrawerError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{type: 'project'; item: Project} | {type: 'task'; item: Task}>();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [restoringKey, setRestoringKey] = useState('');
+  const [actionBanner, setActionBanner] = useState<{status: 'warning' | 'error'; title: string; description: string}>();
   const [isProjectCreateOpen, setIsProjectCreateOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectColor, setNewProjectColor] = useState('#2563eb');
@@ -386,7 +415,9 @@ export default function TasksPage({
 
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const selectedProject = activeProjects.find((project) => project.id === selectedProjectId);
-  const selectedProjectLabel = selectedProject?.name ?? (selectedProjectId === 'none' ? '未分配' : '全部任务');
+  const selectedProjectLabel = selectedProjectId === 'trash'
+    ? '回收站'
+    : selectedProject?.name ?? (selectedProjectId === 'none' ? '未分配' : '全部任务');
   const editingTask = drawer?.mode === 'edit' ? activeTasks.find((task) => task.id === drawer.taskId) : undefined;
   const isDraftDirty = Boolean(drawer) && serializeDraft(draft) !== draftBaseline;
 
@@ -539,18 +570,10 @@ export default function TasksPage({
     }
   };
 
-  const archiveEditingTask = async () => {
-    if (!editingTask || isSubmitting) return;
-    setIsSubmitting(true);
-    setDrawerError('');
-    try {
-      await run(commands.archiveTask(editingTask.id));
-      closeDrawer();
-    } catch (error) {
-      setDrawerError(errorMessage(error));
-    } finally {
-      setIsSubmitting(false);
-    }
+  const requestTaskDelete = (task: Task) => {
+    if (isSubmitting || isDeleting) return;
+    setActionBanner(undefined);
+    setPendingDelete({type: 'task', item: task});
   };
 
   const createAndSelectProject = async () => {
@@ -608,18 +631,75 @@ export default function TasksPage({
     }
   };
 
-  const archiveProject = async (project: Project) => {
+  const requestProjectDelete = (project: Project) => {
     const taskCount = activeTasks.filter((task) => task.projectId === project.id).length;
     if (taskCount > 0) {
-      setProjectMenuError(`该项目仍有关联任务（${taskCount}），请先转移或清空关联任务。`);
+      setProjectMenuId(null);
+      setActionBanner({
+        status: 'warning',
+        title: '无法删除项目',
+        description: `该项目仍有关联任务（${taskCount}），请先转移或删除关联任务。`,
+      });
       return;
     }
+    setProjectMenuId(null);
+    setActionBanner(undefined);
+    setPendingDelete({type: 'project', item: project});
+  };
+
+  const deletePendingItem = async () => {
+    if (!pendingDelete || isDeleting) return;
+    setIsDeleting(true);
+    setActionBanner(undefined);
     try {
-      await run(commands.archiveProject(project.id));
-      if (selectedProjectId === project.id) setSelectedProjectId('all');
-      setProjectMenuId(null);
+      if (pendingDelete.type === 'project') {
+        await run(commands.archiveProject(pendingDelete.item.id));
+        if (selectedProjectId === pendingDelete.item.id) setSelectedProjectId('all');
+        feedback.success(`项目“${pendingDelete.item.name}”已移入回收站。`, 'project-delete-success');
+      } else {
+        await run(commands.archiveTask(pendingDelete.item.id));
+        if (editingTask?.id === pendingDelete.item.id) closeDrawer();
+        feedback.success(`任务“${pendingDelete.item.title}”已移入回收站。`, 'task-delete-success');
+      }
+      setPendingDelete(undefined);
     } catch (error) {
-      setProjectMenuError(errorMessage(error));
+      const message = errorMessage(error);
+      setActionBanner({status: 'error', title: '删除失败', description: message});
+      feedback.error(message, 'delete-action-error');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const restoreProject = async (project: Project) => {
+    if (restoringKey) return;
+    setRestoringKey(`project:${project.id}`);
+    setActionBanner(undefined);
+    try {
+      await run(commands.restoreProject(project.id));
+      feedback.success(`项目“${project.name}”已恢复。`, 'project-restore-success');
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionBanner({status: 'error', title: '恢复项目失败', description: message});
+      feedback.error(message, 'project-restore-error');
+    } finally {
+      setRestoringKey('');
+    }
+  };
+
+  const restoreTask = async (task: Task) => {
+    if (restoringKey) return;
+    setRestoringKey(`task:${task.id}`);
+    setActionBanner(undefined);
+    try {
+      await run(commands.restoreTask(task.id));
+      feedback.success(`任务“${task.title}”已恢复。`, 'task-restore-success');
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionBanner({status: 'error', title: '恢复任务失败', description: message});
+      feedback.error(message, 'task-restore-error');
+    } finally {
+      setRestoringKey('');
     }
   };
 
@@ -797,6 +877,9 @@ export default function TasksPage({
 
   const weekLabel = getMonthWeekLabel(selectedWeekStart);
   const weekRangeLabel = getWeekRangeLabel(selectedWeekStart, weekDays[6]);
+  const trashCount = archivedProjects.length + archivedTasks.length;
+  const isTrash = selectedProjectId === 'trash';
+  const selectedItemCount = isTrash ? trashCount : filteredTasks.length;
 
   return (
     <div className={`task-workspace ${isProjectRailCollapsed ? 'project-rail-collapsed' : ''}`}>
@@ -806,15 +889,17 @@ export default function TasksPage({
             className="project-rail-capsule"
             type="button"
             title="展开项目导航"
-            aria-label={`展开项目导航，当前${selectedProjectLabel}，${filteredTasks.length}个任务`}
+            aria-label={`展开项目导航，当前${selectedProjectLabel}，${selectedItemCount}条记录`}
             style={{
-              '--capsule-text-color': selectedProject?.color ?? (selectedProjectId === 'none' ? 'var(--text-secondary)' : 'var(--accent)'),
+              '--capsule-text-color': isTrash
+                ? 'var(--danger)'
+                : selectedProject?.color ?? (selectedProjectId === 'none' ? 'var(--text-secondary)' : 'var(--accent)'),
             } as CSSProperties}
             onClick={() => setIsProjectRailCollapsed(false)}
           >
             <PanelLeftOpen />
             <span>{selectedProjectLabel}</span>
-            <small>{filteredTasks.length}</small>
+            <small>{selectedItemCount}</small>
           </button>
         ) : (
           <>
@@ -876,9 +961,9 @@ export default function TasksPage({
                     </label>
                     {projectMenuError && <p className="task-form-error">{projectMenuError}</p>}
                     <div className="project-menu-actions">
-                      <button className="project-archive-btn" type="button" onClick={() => void archiveProject(project)}>
+                      <button className="project-archive-btn" type="button" onClick={() => requestProjectDelete(project)}>
                         <Trash2 />
-                        归档
+                        删除项目
                       </button>
                       <button className="primary-btn" type="button" onClick={() => void saveProject(project)}>
                         <Save />
@@ -892,17 +977,29 @@ export default function TasksPage({
             );
           })}
         </div>
+        <button
+          className={`project-filter project-trash-filter ${isTrash ? 'active' : ''}`}
+          type="button"
+          onClick={() => {
+            setProjectMenuId(null);
+            setSelectedProjectId('trash');
+          }}
+        >
+          <Trash2 />
+          <span>回收站</span>
+          <small>{trashCount}</small>
+        </button>
           </>
         )}
       </aside>
 
-      <section className={`task-main ${viewMode === 'week' ? 'week-view' : ''}`}>
+      <section className={`task-main ${viewMode === 'week' ? 'week-view' : ''} ${isTrash ? 'trash-view' : ''} ${actionBanner || taskDragError ? 'has-feedback' : ''}`}>
         <header className="task-module-header">
           <div>
             <span className="section-label">项目任务</span>
-            <h2>{selectedProject?.name ?? (selectedProjectId === 'none' ? '未分配任务' : '全部任务')}</h2>
+            <h2>{isTrash ? '回收站' : selectedProject?.name ?? (selectedProjectId === 'none' ? '未分配任务' : '全部任务')}</h2>
           </div>
-          <div className="task-header-actions">
+          {!isTrash && <div className="task-header-actions">
             <div className="segmented" aria-label="任务视图">
               <button className={viewMode === 'board' ? 'active' : ''} type="button" onClick={() => setViewMode('board')}>
                 <LayoutGrid />
@@ -921,11 +1018,32 @@ export default function TasksPage({
               <Plus />
               新增记录
             </button>
-          </div>
+          </div>}
         </header>
-        {taskDragError && <p className="task-drag-error" role="alert">{taskDragError}</p>}
+        {(actionBanner || taskDragError) && (
+          <VStack className="task-feedback-stack" gap={2} padding={3}>
+            {actionBanner && (
+              <Banner
+                status={actionBanner.status}
+                title={actionBanner.title}
+                description={actionBanner.description}
+                isDismissable
+                onDismiss={() => setActionBanner(undefined)}
+              />
+            )}
+            {taskDragError && (
+              <Banner
+                status="error"
+                title="任务排序失败"
+                description={taskDragError}
+                isDismissable
+                onDismiss={() => setTaskDragError('')}
+              />
+            )}
+          </VStack>
+        )}
 
-        <section className="task-filter-toolbar" aria-label="任务筛选工具栏">
+        {!isTrash && <section className="task-filter-toolbar" aria-label="任务筛选工具栏">
           <div className="task-filter-toolbar-left">
             <button
               ref={filterTriggerRef}
@@ -1017,9 +1135,20 @@ export default function TasksPage({
               onClose={() => setIsFilterOpen(false)}
             />
           )}
-        </section>
+        </section>}
 
-        {viewMode === 'board' ? (
+        {isTrash ? (
+          <TaskRecycleBin
+            activeTab={trashTab}
+            projects={archivedProjects}
+            tasks={archivedTasks}
+            projectById={projectById}
+            restoringKey={restoringKey}
+            onTabChange={setTrashTab}
+            onRestoreProject={restoreProject}
+            onRestoreTask={restoreTask}
+          />
+        ) : viewMode === 'board' ? (
           <DndContext sensors={dragSensors} collisionDetection={taskCollisionDetection} onDragEnd={handleBoardDragEnd}>
             <section className="task-board-scroll">
               <div className="task-board-grid">
@@ -1213,9 +1342,9 @@ export default function TasksPage({
             <footer className="task-drawer-footer">
               {drawer.mode === 'edit' ? (
                 <>
-                  <button className="task-archive-action" type="button" disabled={isSubmitting} onClick={() => void archiveEditingTask()}>
+                  <button className="task-archive-action" type="button" disabled={isSubmitting || isDeleting} onClick={() => editingTask && requestTaskDelete(editingTask)}>
                     <Trash2 />
-                    归档任务
+                    删除任务
                   </button>
                   <button className="primary-btn" type="button" disabled={isSubmitting} onClick={() => void submitTask(false)}>
                     <Save />
@@ -1234,19 +1363,118 @@ export default function TasksPage({
             </footer>
           </aside>
 
-          {showDiscardConfirm && (
-            <section className="task-discard-dialog" role="alertdialog" aria-modal="true" aria-label="放弃未保存修改" onMouseDown={(event) => event.stopPropagation()}>
-              <strong>放弃未保存的修改？</strong>
-              <p>当前任务内容尚未提交，关闭后这些修改将不会保留。</p>
-              <div>
-                <button type="button" onClick={() => setShowDiscardConfirm(false)}>继续编辑</button>
-                <button className="task-discard-action" type="button" onClick={closeDrawer}>放弃修改</button>
-              </div>
-            </section>
-          )}
         </section>
       )}
+      <AppConfirmDialog
+        isOpen={Boolean(pendingDelete)}
+        onOpenChange={(isOpen) => !isOpen && !isDeleting && setPendingDelete(undefined)}
+        title={pendingDelete?.type === 'project'
+          ? `删除项目“${pendingDelete.item.name}”？`
+          : `删除任务“${pendingDelete?.item.title ?? ''}”？`}
+        description={`${pendingDelete?.type === 'project' ? '项目' : '任务'}将移入回收站，之后可以恢复。`}
+        actionLabel={pendingDelete?.type === 'project' ? '删除项目' : '删除任务'}
+        isLoading={isDeleting}
+        onAction={deletePendingItem}
+      />
+      <AppConfirmDialog
+        isOpen={showDiscardConfirm}
+        onOpenChange={(isOpen) => !isOpen && setShowDiscardConfirm(false)}
+        title="放弃未保存的修改？"
+        description="当前任务内容尚未提交，关闭后这些修改将不会保留。"
+        actionLabel="放弃修改"
+        cancelLabel="继续编辑"
+        onAction={closeDrawer}
+      />
     </div>
+  );
+}
+
+function TaskRecycleBin({
+  activeTab,
+  projects,
+  tasks,
+  projectById,
+  restoringKey,
+  onTabChange,
+  onRestoreProject,
+  onRestoreTask,
+}: {
+  activeTab: TrashTab;
+  projects: Project[];
+  tasks: Task[];
+  projectById: Map<string, Project>;
+  restoringKey: string;
+  onTabChange: (tab: TrashTab) => void;
+  onRestoreProject: (project: Project) => Promise<void>;
+  onRestoreTask: (task: Task) => Promise<void>;
+}) {
+  const isProjectTab = activeTab === 'projects';
+  const isEmpty = isProjectTab ? projects.length === 0 : tasks.length === 0;
+
+  return (
+    <VStack as="section" className="task-recycle-bin" gap={0} aria-label="项目任务回收站">
+      <TabList value={activeTab} onChange={(value) => onTabChange(value as TrashTab)} hasDivider>
+        <Tab value="projects" label="项目" endContent={<Badge label={projects.length} variant="neutral" />} />
+        <Tab value="tasks" label="任务" endContent={<Badge label={tasks.length} variant="neutral" />} />
+      </TabList>
+      {isEmpty ? (
+        <EmptyState
+          icon={<Trash2 />}
+          title={isProjectTab ? '没有已删除的项目' : '没有已删除的任务'}
+          description="删除的内容会保留在这里，并且可以随时恢复。"
+        />
+      ) : (
+        <VStack as="ul" className="task-recycle-list" gap={0}>
+          {isProjectTab
+            ? projects.map((project) => (
+                <Item
+                  key={project.id}
+                  as="li"
+                  density="spacious"
+                  startContent={<span className="project-color-dot" style={{'--item-color': project.color} as CSSProperties} />}
+                  label={project.name}
+                  description={`删除于 ${formatTimestamp(project.archivedAt)}`}
+                  endContent={(
+                    <Button
+                      label="恢复项目"
+                      size="sm"
+                      variant="ghost"
+                      icon={<RotateCcw />}
+                      isLoading={restoringKey === `project:${project.id}`}
+                      isDisabled={Boolean(restoringKey) && restoringKey !== `project:${project.id}`}
+                      onClick={() => void onRestoreProject(project)}
+                    />
+                  )}
+                />
+              ))
+            : tasks.map((task) => {
+                const project = task.projectId ? projectById.get(task.projectId) : undefined;
+                const projectLabel = project?.name ?? (task.projectId ? '项目不可用' : '未分配');
+                return (
+                  <Item
+                    key={task.id}
+                    as="li"
+                    density="spacious"
+                    startContent={<CircleCheck aria-hidden="true" />}
+                    label={task.title}
+                    description={`${statusText[task.status]} · ${projectLabel} · 删除于 ${formatTimestamp(task.archivedAt)}`}
+                    endContent={(
+                      <Button
+                        label="恢复任务"
+                        size="sm"
+                        variant="ghost"
+                        icon={<RotateCcw />}
+                        isLoading={restoringKey === `task:${task.id}`}
+                        isDisabled={Boolean(restoringKey) && restoringKey !== `task:${task.id}`}
+                        onClick={() => void onRestoreTask(task)}
+                      />
+                    )}
+                  />
+                );
+              })}
+        </VStack>
+      )}
+    </VStack>
   );
 }
 

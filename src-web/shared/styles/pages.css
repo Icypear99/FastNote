@@ -507,6 +507,182 @@
   min-height: 0;
 }
 
+.essay-workspace {
+  container-type: inline-size;
+}
+
+.essay-rail {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+}
+
+.essay-rail-meta {
+  align-items: center;
+  color: var(--text-tertiary);
+  display: flex;
+  font-size: var(--text-xs);
+  justify-content: space-between;
+  margin: 0;
+  padding: 0 var(--spacing-2) var(--spacing-1);
+}
+
+.essay-filter-heading,
+.essay-filter-empty,
+.essay-selected-tag-count {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--text-supporting-leading);
+}
+
+.essay-filter-heading {
+  padding: var(--spacing-3) var(--spacing-2) var(--spacing-1);
+}
+
+.essay-filter-empty {
+  padding: var(--spacing-2);
+}
+
+.essay-filter-icon {
+  align-items: center;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: center;
+}
+
+.essay-filter-icon svg {
+  height: var(--spacing-4);
+  width: var(--spacing-4);
+}
+
+.essay-rail-capsule.trash > span {
+  color: var(--danger);
+}
+
+.essay-main {
+  gap: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  padding: 0;
+}
+
+.essay-main.has-feedback {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.essay-main.trash-view {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.essay-main.trash-view.has-feedback {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.essay-composer-band {
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--separator);
+  padding: var(--spacing-3);
+}
+
+.essay-feed-scroll {
+  background: var(--color-background-body);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--spacing-3);
+}
+
+.essay-content-column {
+  margin-inline: auto;
+  width: 100%;
+}
+
+.essay-composer {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: var(--spacing-3);
+}
+
+.essay-composer .astryx-textarea textarea {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.essay-composer .astryx-textarea textarea:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.essay-composer-footer {
+  border-top: 1px solid var(--separator);
+  padding-top: var(--spacing-2);
+}
+
+.essay-feed {
+  background: transparent;
+}
+
+.essay-feed-item {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+  padding: var(--spacing-4);
+}
+
+.essay-feed-item + .essay-feed-item {
+  margin-top: var(--spacing-3);
+}
+
+.essay-feed-item-header {
+  min-height: var(--spacing-6);
+}
+
+.essay-feed-tags {
+  min-height: var(--spacing-6);
+}
+
+.essay-feed-markdown {
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.essay-feed-markdown p,
+.essay-feed-markdown [role="paragraph"] {
+  white-space: pre-wrap;
+}
+
+.essay-feed-markdown > :first-child {
+  margin-top: 0;
+}
+
+.essay-feed-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.essay-inline-editor {
+  background: var(--control-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-3);
+}
+
+.essay-feed-scroll .astryx-empty-state {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  min-height: var(--spacing-12);
+  padding: var(--spacing-10);
+}
+
+@media (max-width: 760px) {
+  .essay-composer-band,
+  .essay-feed-scroll,
+  .essay-composer,
+  .essay-feed-item {
+    padding: var(--spacing-2);
+  }
+}
+
 .tool-toolbar {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
@@ -1046,7 +1222,7 @@
 }
 
 .project-rail {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   overflow: visible;
   position: relative;
   z-index: 4;
@@ -1291,6 +1467,24 @@
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
+.project-trash-filter {
+  border-top: 1px solid var(--separator);
+  border-radius: 0;
+  color: var(--text-secondary);
+  margin-top: var(--spacing-1);
+  padding-top: var(--spacing-2);
+}
+
+.project-trash-filter.active,
+.project-trash-filter:hover {
+  color: var(--danger);
+}
+
+.project-trash-filter > svg {
+  height: var(--spacing-4);
+  width: var(--spacing-4);
+}
+
 .task-main {
   gap: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -1352,6 +1546,57 @@
 
 .task-main.week-view {
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.task-main.has-feedback {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.task-main.trash-view {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.task-main.trash-view.has-feedback {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.task-feedback-stack {
+  border-bottom: 1px solid var(--separator);
+}
+
+.task-recycle-bin {
+  min-height: 0;
+  overflow: auto;
+}
+
+.task-recycle-bin > .astryx-tab-list {
+  flex: 0 0 auto;
+  padding-inline: var(--spacing-4);
+}
+
+.task-recycle-bin > .astryx-empty-state {
+  min-height: 100%;
+  padding: var(--spacing-10);
+}
+
+.task-recycle-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--spacing-2) var(--spacing-4);
+}
+
+.task-recycle-list > .astryx-item {
+  border-bottom: 1px solid var(--separator);
+}
+
+.task-recycle-list > .astryx-item:last-child {
+  border-bottom: 0;
+}
+
+.task-recycle-list .astryx-item > svg {
+  color: var(--text-secondary);
+  height: var(--spacing-4);
+  width: var(--spacing-4);
 }
 
 .task-filter-toolbar {
@@ -2763,49 +3008,6 @@ button.task-data-row:hover {
 
 .task-archive-action:hover {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
-}
-
-.task-discard-dialog {
-  background: var(--card-bg);
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.24);
-  display: grid;
-  gap: 12px;
-  left: 50%;
-  padding: 22px;
-  position: fixed;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(380px, calc(100vw - 32px));
-  z-index: 42;
-}
-
-.task-discard-dialog p {
-  color: var(--text-secondary);
-  line-height: 1.55;
-  margin: 0;
-}
-
-.task-discard-dialog > div {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.task-discard-dialog button {
-  background: var(--control-bg);
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  cursor: pointer;
-  min-height: 34px;
-  padding: 0 13px;
-}
-
-.task-discard-dialog .task-discard-action {
-  background: var(--danger);
-  color: #fff;
 }
 
 @media (max-width: 1100px) {

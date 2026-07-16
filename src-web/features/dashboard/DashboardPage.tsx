@@ -1,6 +1,7 @@
 import {BookOpenText, Bot, BriefcaseBusiness, CheckCircle2, Clock3, Wrench} from 'lucide-react';
 import type {CSSProperties} from 'react';
 import type {PanelKey, Project, TaskStatus, WorkspaceSnapshot} from '../../shared/types';
+import {essayExcerpt} from '../../shared/utils/essay';
 
 const statusText: Record<TaskStatus, string> = {
   todo: '待办',
@@ -20,7 +21,9 @@ export default function DashboardPage({
   const today = new Date().toISOString().slice(0, 10);
   const todayTasks = activeTasks.filter((task) => task.dueDate === today);
   const activeEssays = snapshot.essays.filter((essay) => !essay.archivedAt);
-  const recentEssays = activeEssays.slice(0, 5);
+  const recentEssays = [...activeEssays]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, 5);
   const doneTasks = activeTasks.filter((task) => task.status === 'done');
 
   return (
@@ -81,8 +84,8 @@ export default function DashboardPage({
           <div className="list-panel">
             {recentEssays.map((essay) => (
               <button className="list-row clickable-row" key={essay.id} type="button" onClick={() => onNavigate('essays')}>
-                <span>{essay.title}</span>
-                <small>{essay.summary || essay.tags.join(', ') || '快速记录'}</small>
+                <span>{essayExcerpt(essay.content, essay.summary)}</span>
+                <small>{essay.tags.length ? essay.tags.map((tag) => `#${tag}`).join(' ') : '快速记录'}</small>
               </button>
             ))}
           </div>

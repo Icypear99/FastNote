@@ -12,8 +12,10 @@ import type {
   UserProfile,
   WorkspaceSnapshot,
 } from '../../shared/types';
+import {normalizeTags} from '../../shared/utils/essay';
 
 const STORAGE_KEY = 'fastnote:v2';
+const ESSAY_CATEGORY_TAG_MIGRATION_KEY = 'fastnote:migration:essay-categories-to-tags:v1';
 const DEFAULT_PROJECT_ID = 'default-project';
 const DEFAULT_CATEGORY_ID = 'default-essay-category';
 const now = () => new Date().toISOString();
@@ -117,7 +119,7 @@ const seedEssays = (): Essay[] => [
   {
     id: id(),
     title: '工作台随笔',
-    content: '# 工作台随笔\n\n- 本地免登录\n- 数据默认存在本机\n- 删除操作统一归档',
+    content: '# 工作台随笔\n\n- 本地免登录\n- 数据默认存在本机\n- 删除后可在回收站恢复',
     summary: '记录个人工作台第一版的边界。',
     categoryId: DEFAULT_CATEGORY_ID,
     tags: ['备忘'],
@@ -166,15 +168,31 @@ const normalizeSnapshot = (input: LegacySnapshot): WorkspaceSnapshot => {
   };
 };
 
+const migrateEssayCategoriesToTags = (snapshot: WorkspaceSnapshot) => {
+  if (localStorage.getItem(ESSAY_CATEGORY_TAG_MIGRATION_KEY) === '1') return snapshot;
+  const categoryById = new Map(
+    snapshot.essayCategories
+      .filter((category) => category.id !== DEFAULT_CATEGORY_ID && category.name.trim())
+      .map((category) => [category.id, category.name]),
+  );
+  snapshot.essays = snapshot.essays.map((essay) => {
+    const categoryName = essay.categoryId ? categoryById.get(essay.categoryId) : undefined;
+    return categoryName ? {...essay, tags: normalizeTags([...essay.tags, categoryName])} : essay;
+  });
+  return snapshot;
+};
+
 export const readSnapshot = (): WorkspaceSnapshot => {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
-    const snapshot = createDefaultSnapshot();
+    const snapshot = migrateEssayCategoriesToTags(createDefaultSnapshot());
     localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    localStorage.setItem(ESSAY_CATEGORY_TAG_MIGRATION_KEY, '1');
     return snapshot;
   }
-  const snapshot = normalizeSnapshot(JSON.parse(raw) as LegacySnapshot);
+  const snapshot = migrateEssayCategoriesToTags(normalizeSnapshot(JSON.parse(raw) as LegacySnapshot));
   localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  localStorage.setItem(ESSAY_CATEGORY_TAG_MIGRATION_KEY, '1');
   return snapshot;
 };
 
@@ -229,6 +247,19 @@ export const localDb = {
     }
     return localDb.updateProject({id: idValue, archivedAt: now()});
   },
+  async restoreProject(idValue: string) {
+    const snapshot = readSnapshot();
+    const timestamp = now();
+    let restoredProject: Project | undefined;
+    snapshot.projects = snapshot.projects.map((project) => {
+      if (project.id !== idValue) return project;
+      restoredProject = {...project, archivedAt: undefined, updatedAt: timestamp};
+      return restoredProject;
+    });
+    if (!restoredProject) throw new Error('项目不存在');
+    writeSnapshot(snapshot);
+    return restoredProject;
+  },
   async createTask(input: Partial<Task>) {
     const snapshot = readSnapshot();
     const task: Task = {
@@ -269,7 +300,40 @@ export const localDb = {
     return snapshot.tasks.find((task) => task.id === input.id)!;
   },
   async archiveTask(idValue: string) {
-    return localDb.updateTask({id: idValue, archivedAt: now()});
+    const snapshot = readSnapshot();
+    const timestamp = now();
+    let archivedTask: Task | undefined;
+    snapshot.tasks = snapshot.tasks.map((task) => {
+      if (task.id === idValue) {
+        archivedTask = {...task, archivedAt: timestamp, updatedAt: timestamp};
+        return archivedTask;
+      }
+      if (task.parentId === idValue) return {...task, parentId: undefined, updatedAt: timestamp};
+      return task;
+    });
+    if (!archivedTask) throw new Error('任务不存在');
+    writeSnapshot(snapshot);
+    return archivedTask;
+  },
+  async restoreTask(idValue: string) {
+    const snapshot = readSnapshot();
+    const task = snapshot.tasks.find((item) => item.id === idValue);
+    if (!task) throw new Error('任务不存在');
+    if (task.projectId) {
+      const project = snapshot.projects.find((item) => item.id === task.projectId);
+      if (!project) throw new Error('任务所属项目不存在，请先处理项目关联。');
+      if (project.archivedAt) throw new Error('任务所属项目仍在回收站，请先恢复项目。');
+    }
+    const parent = task.parentId ? snapshot.tasks.find((item) => item.id === task.parentId) : undefined;
+    const restoredTask: Task = {
+      ...task,
+      parentId: parent && !parent.archivedAt ? parent.id : undefined,
+      archivedAt: undefined,
+      updatedAt: now(),
+    };
+    snapshot.tasks = snapshot.tasks.map((item) => item.id === idValue ? restoredTask : item);
+    writeSnapshot(snapshot);
+    return restoredTask;
   },
   async moveTask(idValue: string, status: TaskStatus) {
     return localDb.updateTask({id: idValue, status});
@@ -341,6 +405,14 @@ export const localDb = {
   },
   async archiveEssay(idValue: string) {
     return localDb.updateEssay({id: idValue, archivedAt: now()});
+  },
+  async restoreEssay(idValue: string) {
+    const snapshot = readSnapshot();
+    snapshot.essays = snapshot.essays.map((essay) =>
+      essay.id === idValue ? {...essay, archivedAt: undefined, updatedAt: now()} : essay,
+    );
+    writeSnapshot(snapshot);
+    return snapshot.essays.find((essay) => essay.id === idValue)!;
   },
   async updateSettings(input: Partial<Settings>) {
     const snapshot = readSnapshot();

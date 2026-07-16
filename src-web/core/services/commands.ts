@@ -21,10 +21,12 @@ export const commands = {
   updateProject: (project: Partial<Project> & {id: string}) =>
     call<Project>('project_update', {project}, () => localDb.updateProject(project)),
   archiveProject: (id: string) => call<Project>('project_archive', {id}, () => localDb.archiveProject(id)),
+  restoreProject: (id: string) => call<Project>('project_restore', {id}, () => localDb.restoreProject(id)),
   createTask: (task: Partial<Task>) => call<Task>('task_create', {task}, () => localDb.createTask(task)),
   updateTask: (task: Partial<Task> & {id: string}) =>
     call<Task>('task_update', {task}, () => localDb.updateTask(task)),
   archiveTask: (id: string) => call<Task>('task_archive', {id}, () => localDb.archiveTask(id)),
+  restoreTask: (id: string) => call<Task>('task_restore', {id}, () => localDb.restoreTask(id)),
   moveTask: (id: string, status: TaskStatus) =>
     call<Task>('task_move', {id, status}, () => localDb.moveTask(id, status)),
   reorderTasks: (placements: TaskPlacement[]) =>
@@ -39,6 +41,7 @@ export const commands = {
   updateEssay: (essay: Partial<Essay> & {id: string}) =>
     call<Essay>('essay_update', {essay}, () => localDb.updateEssay(essay)),
   archiveEssay: (id: string) => call<Essay>('essay_archive', {id}, () => localDb.archiveEssay(id)),
+  restoreEssay: (id: string) => call<Essay>('essay_restore', {id}, () => localDb.restoreEssay(id)),
   updateSettings: (settings: Partial<Settings>) =>
     call<Settings>('settings_update', {settings}, () => localDb.updateSettings(settings)),
   sendMessage: (content: string, conversationId?: string) =>

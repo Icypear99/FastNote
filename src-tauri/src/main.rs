@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 const DEFAULT_PROJECT_ID: &str = "default-project";
 const DEFAULT_CATEGORY_ID: &str = "default-essay-category";
+const ESSAY_CATEGORY_TAG_MIGRATION_KEY: &str = "migration.essay_categories_to_tags.v1";
 
 struct AppState {
     db_path: PathBuf,
@@ -267,11 +268,12 @@ fn open_db(state: &State<AppState>) -> Result<Connection, String> {
 }
 
 fn init_db(db_path: &PathBuf) -> Result<(), String> {
-    let conn = Connection::open(db_path).map_err(|error| error.to_string())?;
+    let mut conn = Connection::open(db_path).map_err(|error| error.to_string())?;
     conn.execute_batch(include_str!("../migrations/001_init.sql"))
         .map_err(|error| error.to_string())?;
     ensure_schema(&conn)?;
-    seed_defaults(&conn)
+    seed_defaults(&conn)?;
+    migrate_essay_categories_to_tags(&mut conn)
 }
 
 fn ensure_schema(conn: &Connection) -> Result<(), String> {
@@ -327,6 +329,73 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, S
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
     Ok(columns.iter().any(|item| item == column))
+}
+
+fn normalize_tag(value: &str) -> String {
+    value.trim().trim_start_matches('#').trim().to_lowercase()
+}
+
+fn migrate_essay_categories_to_tags(conn: &mut Connection) -> Result<(), String> {
+    let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    let is_complete = transaction
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![ESSAY_CATEGORY_TAG_MIGRATION_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .is_some();
+
+    if is_complete {
+        transaction.commit().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let notes = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT notes.id, notes.tags, essay_categories.name
+                FROM notes
+                INNER JOIN essay_categories ON essay_categories.id = notes.category_id
+                WHERE essay_categories.id <> ?1 AND TRIM(essay_categories.name) <> ''
+                ORDER BY notes.id ASC",
+            )
+            .map_err(|error| error.to_string())?;
+        let notes = statement
+            .query_map(params![DEFAULT_CATEGORY_ID], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        notes
+    };
+
+    for (note_id, raw_tags, category_name) in notes {
+        let mut tags = serde_json::from_str::<Vec<String>>(&raw_tags).map_err(|error| error.to_string())?;
+        let normalized_category = normalize_tag(&category_name);
+        if normalized_category.is_empty() || tags.iter().any(|tag| normalize_tag(tag) == normalized_category) {
+            continue;
+        }
+        tags.push(category_name.trim().trim_start_matches('#').trim().to_string());
+        let serialized = serde_json::to_string(&tags).map_err(|error| error.to_string())?;
+        transaction
+            .execute("UPDATE notes SET tags = ?1 WHERE id = ?2", params![serialized, note_id])
+            .map_err(|error| error.to_string())?;
+    }
+
+    transaction
+        .execute(
+            "INSERT INTO settings (key, value) VALUES (?1, '1')",
+            params![ESSAY_CATEGORY_TAG_MIGRATION_KEY],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 fn seed_defaults(conn: &Connection) -> Result<(), String> {
@@ -500,9 +569,7 @@ fn project_update(state: State<AppState>, project: ProjectPatch) -> Result<Proje
     read_project(&conn, &id)
 }
 
-#[tauri::command]
-fn project_archive(state: State<AppState>, id: String) -> Result<Project, String> {
-    let conn = open_db(&state)?;
+fn archive_project_record(conn: &Connection, id: &str) -> Result<Project, String> {
     let active_task_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM tasks WHERE project_id = ?1 AND archived_at IS NULL",
@@ -513,16 +580,41 @@ fn project_archive(state: State<AppState>, id: String) -> Result<Project, String
     if active_task_count > 0 {
         return Err("该项目仍有关联任务，请先转移或清空关联任务。".to_string());
     }
-    drop(conn);
-    project_update(
-        state,
-        ProjectPatch {
-            id: Some(id),
-            name: None,
-            color: None,
-            archived_at: Some(now()),
-        },
-    )
+    let updated = conn
+        .execute(
+            "UPDATE projects SET archived_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![now(), id],
+        )
+        .map_err(|error| error.to_string())?;
+    if updated == 0 {
+        return Err("项目不存在".to_string());
+    }
+    read_project(conn, id)
+}
+
+#[tauri::command]
+fn project_archive(state: State<AppState>, id: String) -> Result<Project, String> {
+    let conn = open_db(&state)?;
+    archive_project_record(&conn, &id)
+}
+
+fn restore_project_record(conn: &Connection, id: &str) -> Result<Project, String> {
+    let updated = conn
+        .execute(
+            "UPDATE projects SET archived_at = NULL, updated_at = ?1 WHERE id = ?2",
+            params![now(), id],
+        )
+        .map_err(|error| error.to_string())?;
+    if updated == 0 {
+        return Err("项目不存在".to_string());
+    }
+    read_project(conn, id)
+}
+
+#[tauri::command]
+fn project_restore(state: State<AppState>, id: String) -> Result<Project, String> {
+    let conn = open_db(&state)?;
+    restore_project_record(&conn, &id)
 }
 
 #[tauri::command]
@@ -638,25 +730,91 @@ fn tasks_reorder(state: State<AppState>, placements: Vec<TaskPlacement>) -> Resu
     transaction.commit().map_err(|error| error.to_string())
 }
 
+fn archive_task_record(conn: &mut Connection, id: &str) -> Result<Task, String> {
+    let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    let timestamp = now();
+    let updated = transaction
+        .execute(
+            "UPDATE tasks SET archived_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![timestamp, id],
+        )
+        .map_err(|error| error.to_string())?;
+    if updated == 0 {
+        return Err("任务不存在".to_string());
+    }
+    transaction
+        .execute(
+            "UPDATE tasks SET parent_id = NULL, updated_at = ?1 WHERE parent_id = ?2",
+            params![timestamp, id],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    read_task(conn, id)
+}
+
+fn restore_task_record(conn: &mut Connection, id: &str) -> Result<Task, String> {
+    let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    let (project_id, parent_id): (Option<String>, Option<String>) = transaction
+        .query_row(
+            "SELECT project_id, parent_id FROM tasks WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| error.to_string())?;
+
+    if let Some(project_id) = project_id {
+        let project_archived_at = transaction
+            .query_row(
+                "SELECT archived_at FROM projects WHERE id = ?1",
+                params![project_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        match project_archived_at {
+            None => return Err("任务所属项目不存在，请先处理项目关联。".to_string()),
+            Some(Some(_)) => return Err("任务所属项目仍在回收站，请先恢复项目。".to_string()),
+            Some(None) => {}
+        }
+    }
+
+    let restored_parent_id = if let Some(parent_id) = parent_id {
+        let parent_archived_at = transaction
+            .query_row(
+                "SELECT archived_at FROM tasks WHERE id = ?1",
+                params![parent_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        match parent_archived_at {
+            Some(None) => Some(parent_id),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    transaction
+        .execute(
+            "UPDATE tasks SET archived_at = NULL, parent_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![restored_parent_id, now(), id],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    read_task(conn, id)
+}
+
 #[tauri::command]
 fn task_archive(state: State<AppState>, id: String) -> Result<Task, String> {
-    task_update(
-        state,
-        TaskPatch {
-            id: Some(id),
-            archived_at: Some(now()),
-            title: None,
-            description: None,
-            task_type: None,
-            priority: None,
-            status: None,
-            project_id: None,
-            labels: None,
-            due_date: None,
-            progress: None,
-            parent_id: None,
-        },
-    )
+    let mut conn = open_db(&state)?;
+    archive_task_record(&mut conn, &id)
+}
+
+#[tauri::command]
+fn task_restore(state: State<AppState>, id: String) -> Result<Task, String> {
+    let mut conn = open_db(&state)?;
+    restore_task_record(&mut conn, &id)
 }
 
 #[tauri::command]
@@ -786,6 +944,17 @@ fn essay_archive(state: State<AppState>, id: String) -> Result<Essay, String> {
             status: None,
         },
     )
+}
+
+#[tauri::command]
+fn essay_restore(state: State<AppState>, id: String) -> Result<Essay, String> {
+    let conn = open_db(&state)?;
+    conn.execute(
+        "UPDATE notes SET archived_at = NULL, updated_at = ?1 WHERE id = ?2",
+        params![now(), id],
+    )
+    .map_err(|error| error.to_string())?;
+    read_essay(&conn, &id)
 }
 
 #[tauri::command]
@@ -1291,20 +1460,304 @@ fn main() {
             project_create,
             project_update,
             project_archive,
+            project_restore,
             task_create,
             task_update,
             task_move,
             tasks_reorder,
             task_archive,
+            task_restore,
             essay_category_create,
             essay_category_update,
             essay_category_archive,
             essay_create,
             essay_update,
             essay_archive,
+            essay_restore,
             settings_update,
             chat_send
         ])
         .run(tauri::generate_context!())
         .expect("failed to run app");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn migration_connection() -> Connection {
+        let connection = Connection::open_in_memory().expect("open test database");
+        connection
+            .execute_batch(
+                "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE essay_categories (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    order_num INTEGER NOT NULL DEFAULT 0,
+                    archived_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE notes (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL DEFAULT '',
+                    summary TEXT NOT NULL DEFAULT '',
+                    category_id TEXT,
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    archived_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );",
+            )
+            .expect("create test schema");
+        connection
+    }
+
+    fn records_connection() -> Connection {
+        let connection = Connection::open_in_memory().expect("open record test database");
+        connection
+            .execute_batch(
+                "CREATE TABLE projects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    archived_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT 'task',
+                    priority TEXT NOT NULL DEFAULT 'P2',
+                    status TEXT NOT NULL DEFAULT 'todo',
+                    project_id TEXT,
+                    labels TEXT NOT NULL DEFAULT '[]',
+                    due_date TEXT NOT NULL DEFAULT '',
+                    progress INTEGER NOT NULL DEFAULT 0,
+                    parent_id TEXT,
+                    order_num INTEGER NOT NULL DEFAULT 0,
+                    archived_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );",
+            )
+            .expect("create record test schema");
+        connection
+    }
+
+    #[test]
+    fn project_restore_is_idempotent_and_preserves_fields() {
+        let connection = records_connection();
+        connection
+            .execute(
+                "INSERT INTO projects (id, name, color, archived_at, created_at, updated_at)
+                VALUES ('project', '重要项目', '#123456', 'deleted', 'created', 'before')",
+                [],
+            )
+            .expect("insert project");
+
+        let first = restore_project_record(&connection, "project").expect("restore project");
+        let second = restore_project_record(&connection, "project").expect("restore project again");
+
+        assert_eq!(first.name, "重要项目");
+        assert_eq!(first.color, "#123456");
+        assert_eq!(first.created_at, "created");
+        assert!(first.archived_at.is_none());
+        assert!(second.archived_at.is_none());
+    }
+
+    #[test]
+    fn project_archive_requires_all_related_tasks_to_be_archived() {
+        let connection = records_connection();
+        connection
+            .execute_batch(
+                "INSERT INTO projects (id, name, color, created_at, updated_at)
+                VALUES ('project', '项目', '#123456', 'created', 'before');
+                INSERT INTO tasks (id, title, project_id, created_at, updated_at)
+                VALUES ('task', '任务', 'project', 'created', 'before');",
+            )
+            .expect("insert active project fixture");
+
+        let error = archive_project_record(&connection, "project").unwrap_err();
+        assert!(error.contains("仍有关联任务"));
+        assert!(read_project(&connection, "project").unwrap().archived_at.is_none());
+
+        connection
+            .execute(
+                "UPDATE tasks SET archived_at = 'deleted' WHERE id = 'task'",
+                [],
+            )
+            .expect("archive related task");
+        let archived = archive_project_record(&connection, "project").expect("archive project");
+        assert!(archived.archived_at.is_some());
+    }
+
+    #[test]
+    fn task_archive_unlinks_children_and_restore_preserves_task() {
+        let mut connection = records_connection();
+        connection
+            .execute_batch(
+                "INSERT INTO projects (id, name, color, created_at, updated_at)
+                VALUES ('project', '项目', '#123456', 'created', 'updated');
+                INSERT INTO tasks (id, title, project_id, labels, archived_at, created_at, updated_at)
+                VALUES ('parent', '父任务', 'project', '[\"保留\"]', NULL, 'created', 'before');
+                INSERT INTO tasks (id, title, project_id, parent_id, created_at, updated_at)
+                VALUES ('child', '子任务', 'project', 'parent', 'created', 'before');",
+            )
+            .expect("insert task hierarchy");
+
+        let archived = archive_task_record(&mut connection, "parent").expect("archive parent");
+        let child = read_task(&connection, "child").expect("read child");
+        assert!(archived.archived_at.is_some());
+        assert!(child.parent_id.is_none());
+        assert!(child.archived_at.is_none());
+
+        let restored = restore_task_record(&mut connection, "parent").expect("restore parent");
+        assert_eq!(restored.title, "父任务");
+        assert_eq!(restored.labels, vec!["保留"]);
+        assert_eq!(restored.created_at, "created");
+        assert!(restored.archived_at.is_none());
+    }
+
+    #[test]
+    fn task_restore_requires_an_active_project() {
+        let mut connection = records_connection();
+        connection
+            .execute_batch(
+                "INSERT INTO projects (id, name, color, archived_at, created_at, updated_at)
+                VALUES ('project', '项目', '#123456', 'deleted', 'created', 'updated');
+                INSERT INTO tasks (id, title, project_id, archived_at, created_at, updated_at)
+                VALUES ('task', '任务', 'project', 'deleted', 'created', 'updated'),
+                       ('orphan', '孤立任务', 'missing', 'deleted', 'created', 'updated');",
+            )
+            .expect("insert archived records");
+
+        let archived_project_error = restore_task_record(&mut connection, "task").unwrap_err();
+        assert!(archived_project_error.contains("请先恢复项目"));
+        let missing_project_error = restore_task_record(&mut connection, "orphan").unwrap_err();
+        assert!(missing_project_error.contains("项目不存在"));
+
+        restore_project_record(&connection, "project").expect("restore project");
+        let restored = restore_task_record(&mut connection, "task").expect("restore task");
+        assert!(restored.archived_at.is_none());
+        assert_eq!(restored.project_id.as_deref(), Some("project"));
+    }
+
+    #[test]
+    fn task_restore_clears_an_unavailable_parent() {
+        let mut connection = records_connection();
+        connection
+            .execute_batch(
+                "INSERT INTO projects (id, name, color, created_at, updated_at)
+                VALUES ('project', '项目', '#123456', 'created', 'updated');
+                INSERT INTO tasks (id, title, project_id, archived_at, created_at, updated_at)
+                VALUES ('parent', '父任务', 'project', 'deleted', 'created', 'updated');
+                INSERT INTO tasks (id, title, project_id, parent_id, archived_at, created_at, updated_at)
+                VALUES ('child', '子任务', 'project', 'parent', 'deleted', 'created', 'updated');",
+            )
+            .expect("insert unavailable parent");
+
+        let restored = restore_task_record(&mut connection, "child").expect("restore child");
+        assert!(restored.parent_id.is_none());
+        assert!(restored.archived_at.is_none());
+    }
+
+    #[test]
+    fn task_archive_rolls_back_when_child_unlink_fails() {
+        let mut connection = records_connection();
+        connection
+            .execute_batch(
+                "INSERT INTO tasks (id, title, created_at, updated_at)
+                VALUES ('parent', '父任务', 'created', 'before');
+                INSERT INTO tasks (id, title, parent_id, created_at, updated_at)
+                VALUES ('child', '子任务', 'parent', 'created', 'before');
+                CREATE TRIGGER prevent_child_unlink
+                BEFORE UPDATE OF parent_id ON tasks
+                WHEN OLD.parent_id = 'parent' AND NEW.parent_id IS NULL
+                BEGIN
+                    SELECT RAISE(ABORT, 'cannot unlink child');
+                END;",
+            )
+            .expect("insert rollback fixture");
+
+        assert!(archive_task_record(&mut connection, "parent").is_err());
+        let parent = read_task(&connection, "parent").expect("read rolled back parent");
+        let child = read_task(&connection, "child").expect("read rolled back child");
+        assert!(parent.archived_at.is_none());
+        assert_eq!(parent.updated_at, "before");
+        assert_eq!(child.parent_id.as_deref(), Some("parent"));
+    }
+
+    #[test]
+    fn category_tag_migration_is_idempotent_and_preserves_existing_data() {
+        let mut connection = migration_connection();
+        connection
+            .execute(
+                "INSERT INTO essay_categories (id, name, color, created_at, updated_at)
+                VALUES (?1, '未分类', '', 'created', 'updated'), ('ideas', '灵感', '', 'created', 'updated')",
+                params![DEFAULT_CATEGORY_ID],
+            )
+            .expect("insert categories");
+        connection
+            .execute_batch(
+                "INSERT INTO notes (id, title, category_id, tags, created_at, updated_at)
+                VALUES ('default-note', 'Default', 'default-essay-category', '[]', 'created', 'unchanged'),
+                       ('idea-note', 'Idea', 'ideas', '[\"已有\"]', 'created', 'unchanged'),
+                       ('deduped-note', 'Deduped', 'ideas', '[\"灵感\"]', 'created', 'unchanged');",
+            )
+            .expect("insert notes");
+
+        migrate_essay_categories_to_tags(&mut connection).expect("run migration");
+        migrate_essay_categories_to_tags(&mut connection).expect("rerun migration");
+
+        let idea_tags: String = connection
+            .query_row("SELECT tags FROM notes WHERE id = 'idea-note'", [], |row| row.get(0))
+            .expect("read migrated tags");
+        assert_eq!(serde_json::from_str::<Vec<String>>(&idea_tags).unwrap(), vec!["已有", "灵感"]);
+        let default_tags: String = connection
+            .query_row("SELECT tags FROM notes WHERE id = 'default-note'", [], |row| row.get(0))
+            .expect("read default tags");
+        assert_eq!(default_tags, "[]");
+        let deduped_tags: String = connection
+            .query_row("SELECT tags FROM notes WHERE id = 'deduped-note'", [], |row| row.get(0))
+            .expect("read deduped tags");
+        assert_eq!(serde_json::from_str::<Vec<String>>(&deduped_tags).unwrap(), vec!["灵感"]);
+        let updated_at: String = connection
+            .query_row("SELECT updated_at FROM notes WHERE id = 'idea-note'", [], |row| row.get(0))
+            .expect("read timestamp");
+        assert_eq!(updated_at, "unchanged");
+    }
+
+    #[test]
+    fn category_tag_migration_rolls_back_on_invalid_tag_data() {
+        let mut connection = migration_connection();
+        connection
+            .execute_batch(
+                "INSERT INTO essay_categories (id, name, color, created_at, updated_at)
+                VALUES ('ideas', '灵感', '', 'created', 'updated');
+                INSERT INTO notes (id, title, category_id, tags, created_at, updated_at)
+                VALUES ('a-valid', 'Valid', 'ideas', '[\"已有\"]', 'created', 'updated'),
+                       ('b-invalid', 'Invalid', 'ideas', 'not-json', 'created', 'updated');",
+            )
+            .expect("insert migration fixtures");
+
+        assert!(migrate_essay_categories_to_tags(&mut connection).is_err());
+        let tags: String = connection
+            .query_row("SELECT tags FROM notes WHERE id = 'a-valid'", [], |row| row.get(0))
+            .expect("read rolled back tags");
+        assert_eq!(tags, "[\"已有\"]");
+        let marker_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = ?1",
+                params![ESSAY_CATEGORY_TAG_MIGRATION_KEY],
+                |row| row.get(0),
+            )
+            .expect("read migration marker");
+        assert_eq!(marker_count, 0);
+    }
 }
