@@ -1,0 +1,386 @@
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.workspace-frame {
+  min-height: 100%;
+  overflow: auto;
+}
+
+.page-frame {
+  display: grid;
+  gap: var(--spacing-6);
+  padding: var(--spacing-6);
+}
+
+.page-header {
+  align-items: end;
+  display: flex;
+  gap: var(--spacing-4);
+  justify-content: space-between;
+}
+
+.page-header section {
+  display: grid;
+  gap: var(--spacing-1);
+}
+
+.page-header small {
+  color: var(--color-text-accent);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+}
+
+.page-header h1,
+.panel-heading h2,
+.kanban-column h2,
+.markdown-preview h2,
+.profile-card h2 {
+  margin: 0;
+}
+
+.page-header h1 {
+  font-size: var(--text-heading-1-size);
+  font-weight: var(--text-heading-1-weight);
+  line-height: var(--text-heading-1-leading);
+}
+
+.page-header p,
+.muted,
+.metric-card p,
+.compact-row p,
+.profile-card p,
+.quick-action small,
+.note-row small {
+  color: var(--color-text-secondary);
+}
+
+.page-header p,
+.metric-card p,
+.compact-row p,
+.profile-card p {
+  margin: 0;
+}
+
+.top-profile,
+.panel-heading,
+.tool-header,
+.editor-toolbar,
+.composer,
+.token-row,
+.task-card footer,
+.kanban-column header {
+  align-items: center;
+  display: flex;
+  gap: var(--spacing-3);
+}
+
+.top-profile {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.brand-logo {
+  border-radius: var(--radius-sm);
+  display: block;
+  height: var(--spacing-6);
+  object-fit: cover;
+  width: var(--spacing-6);
+}
+
+.dashboard-grid,
+.quick-grid,
+.form-grid,
+.settings-grid {
+  display: grid;
+  gap: var(--spacing-4);
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+}
+
+.two-column,
+.profile-layout,
+.tool-grid,
+.editor-grid,
+.ai-layout,
+.split-layout {
+  display: grid;
+  gap: var(--spacing-5);
+}
+
+.two-column,
+.profile-layout,
+.tool-grid,
+.editor-grid {
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+
+.split-layout,
+.ai-layout {
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+}
+
+.metric-card {
+  display: grid;
+  gap: var(--spacing-2);
+}
+
+.metric-card span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.metric-card strong {
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.panel-heading {
+  justify-content: space-between;
+  margin-bottom: var(--spacing-4);
+}
+
+.row-list,
+.task-stack,
+.note-list,
+.conversation-list,
+.chat-panel,
+.editor-panel,
+.profile-form,
+.profile-card,
+.markdown-preview,
+.message-list {
+  display: grid;
+  gap: var(--spacing-3);
+}
+
+.compact-row {
+  border-bottom: var(--border-width) solid var(--color-border);
+  display: grid;
+  gap: var(--spacing-1);
+  padding: var(--spacing-3) 0;
+}
+
+.compact-row:last-child {
+  border-bottom: 0;
+}
+
+.quick-action,
+.note-row {
+  background: var(--color-background-card);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: grid;
+  gap: var(--spacing-2);
+  padding: var(--spacing-4);
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard);
+}
+
+.quick-action:hover,
+.note-row:hover,
+.note-row.is-active {
+  background: var(--color-background-muted);
+  border-color: var(--color-border-emphasized);
+}
+
+.quick-icon {
+  color: var(--color-icon-accent);
+}
+
+.kanban-grid {
+  display: grid;
+  gap: var(--spacing-4);
+  grid-template-columns: repeat(3, minmax(16rem, 1fr));
+}
+
+.kanban-column {
+  background: var(--color-background-muted);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  display: grid;
+  gap: var(--spacing-4);
+  min-height: 24rem;
+  padding: var(--spacing-4);
+}
+
+.kanban-column header {
+  justify-content: space-between;
+}
+
+.task-card,
+.chat-bubble {
+  background: var(--color-background-card);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+  display: grid;
+  gap: var(--spacing-3);
+  padding: var(--spacing-4);
+}
+
+.task-card header {
+  align-items: start;
+  display: flex;
+  gap: var(--spacing-3);
+  justify-content: space-between;
+}
+
+.task-card p {
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.task-card footer {
+  justify-content: space-between;
+}
+
+.field-shell,
+.mini-select {
+  display: grid;
+  gap: var(--spacing-2);
+}
+
+.field-shell span,
+.mini-select span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.field-shell input,
+.field-shell select,
+.mini-select select {
+  background: var(--color-background-surface);
+  border: var(--border-width) solid var(--color-border-emphasized);
+  border-radius: var(--radius-element);
+  color: var(--color-text-primary);
+  min-height: var(--size-element-lg);
+  padding: var(--spacing-2) var(--spacing-3);
+}
+
+.mini-select {
+  min-width: 8rem;
+}
+
+.note-list,
+.conversation-list {
+  align-content: start;
+}
+
+.editor-toolbar,
+.tool-header,
+.composer {
+  align-items: end;
+}
+
+.markdown-preview {
+  max-height: 32rem;
+  overflow: auto;
+}
+
+.ai-layout {
+  align-items: start;
+}
+
+.chat-panel {
+  min-width: 0;
+}
+
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+.prompt-actions button {
+  background: var(--color-background-muted);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: var(--spacing-2) var(--spacing-3);
+}
+
+.message-list {
+  background: var(--color-background-muted);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-container);
+  min-height: 24rem;
+  padding: var(--spacing-4);
+}
+
+.chat-bubble.user {
+  border-color: var(--color-border-blue);
+  margin-left: var(--spacing-12);
+}
+
+.chat-bubble.assistant {
+  margin-right: var(--spacing-12);
+}
+
+.profile-card {
+  justify-items: center;
+  text-align: center;
+}
+
+.avatar {
+  align-items: center;
+  background: var(--color-accent-muted);
+  border: var(--border-width) solid var(--color-border-blue);
+  border-radius: var(--radius-full);
+  color: var(--color-text-accent);
+  display: inline-flex;
+  font-weight: var(--font-weight-semibold);
+  justify-content: center;
+  object-fit: cover;
+}
+
+.avatar.sm {
+  height: var(--spacing-8);
+  width: var(--spacing-8);
+}
+
+.avatar.lg {
+  font-size: var(--font-size-3xl);
+  height: 7rem;
+  width: 7rem;
+}
+
+.empty-panel {
+  align-content: center;
+  display: grid;
+  gap: var(--spacing-3);
+  justify-items: start;
+  min-height: 18rem;
+}
+
+@media (max-width: 64rem) {
+  .kanban-grid,
+  .split-layout,
+  .ai-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .page-header {
+    align-items: start;
+    flex-direction: column;
+  }
+}

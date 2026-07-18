@@ -1,0 +1,193 @@
+.content-section {
+  display: grid;
+  gap: 8px;
+}
+
+.section-label {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding-left: 2px;
+}
+
+.list-panel,
+.settings-card,
+.form-panel {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.list-row,
+.setting-row {
+  align-items: center;
+  background: var(--card-bg);
+  border: 0;
+  border-bottom: 0.5px solid var(--separator);
+  color: var(--text-primary);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.list-row:last-child,
+.setting-row:last-child {
+  border-bottom: 0;
+}
+
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover,
+.essay-item:hover,
+.conversation-item:hover {
+  background: var(--card-hover-bg);
+}
+
+.list-row small,
+.essay-item small,
+.conversation-item small,
+.muted-row {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.dark-btn,
+.primary-btn {
+  background: var(--accent-strong);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  min-height: 32px;
+  padding: 0 14px;
+}
+
+.dark-btn:hover,
+.primary-btn:hover {
+  background: var(--accent-strong-hover);
+  color: var(--text-on-accent);
+}
+
+.block-btn {
+  width: 100%;
+}
+
+.row-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.row-actions button {
+  background: var(--control-bg);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.row-actions select {
+  min-width: 92px;
+}
+
+.empty-state,
+.page-loading {
+  align-items: center;
+  color: var(--text-secondary);
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  min-height: 240px;
+}
+
+.empty-state strong {
+  color: var(--text-primary);
+}
+
+.priority-pill {
+  background: var(--chip-bg);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  padding: 3px 8px;
+}
+
+.priority-pill.p0 {
+  background: rgba(255, 59, 48, 0.11);
+  color: var(--danger);
+}
+
+.priority-pill.p1 {
+  background: rgba(255, 149, 0, 0.14);
+  color: var(--warning);
+}
+
+.priority-pill.p2 {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.project-color-dot,
+.project-row-title i,
+.project-token i {
+  background: var(--item-color, var(--accent));
+  border-radius: 999px;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 10px;
+  width: 10px;
+}
+
+.project-color-dot.neutral {
+  background: var(--accent);
+}
+
+.project-color-dot.muted {
+  background: var(--text-tertiary);
+}
+
+.project-row-title,
+.project-token {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.project-token i {
+  height: 8px;
+  width: 8px;
+}
+
+.segmented {
+  background: var(--control-bg);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+}
+
+.segmented button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.segmented button.active {
+  background: var(--card-bg);
+  color: var(--text-primary);
+  box-shadow: var(--shadow);
+}
