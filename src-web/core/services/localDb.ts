@@ -3,7 +3,9 @@ import type {
   AiMessage,
   DashboardCard,
   Essay,
+  EssayAttachment,
   EssayCategory,
+  EssayMutation,
   Project,
   Settings,
   Task,
@@ -120,12 +122,15 @@ const seedEssays = (): Essay[] => [
     id: id(),
     title: '工作台随笔',
     content: '# 工作台随笔\n\n- 本地免登录\n- 数据默认存在本机\n- 删除后可在回收站恢复',
+    contentFormat: 'markdown',
+    contentJson: '',
     summary: '记录个人工作台第一版的边界。',
     categoryId: DEFAULT_CATEGORY_ID,
     tags: ['备忘'],
     status: 'draft',
     createdAt: now(),
     updatedAt: now(),
+    attachments: [],
   },
 ];
 
@@ -149,6 +154,9 @@ const normalizeSnapshot = (input: LegacySnapshot): WorkspaceSnapshot => {
   const essays = (input.essays ?? input.notes ?? fallback.essays).map((essay) => ({
     ...essay,
     categoryId: essay.categoryId || defaultCategoryId,
+    contentFormat: essay.contentFormat || (essay.contentJson ? 'tiptap-json' : 'markdown'),
+    contentJson: essay.contentJson || '',
+    attachments: essay.attachments || [],
   }));
   return {
     profile: {...fallback.profile, ...input.profile},
@@ -377,28 +385,36 @@ export const localDb = {
   async archiveEssayCategory(idValue: string) {
     return localDb.updateEssayCategory({id: idValue, archivedAt: now()});
   },
-  async createEssay(input: Partial<Essay>) {
+  async createEssay(input: EssayMutation) {
     const snapshot = readSnapshot();
     const defaultCategoryId = snapshot.essayCategories.find((category) => !category.archivedAt)?.id;
     const essay: Essay = {
       id: id(),
       title: input.title || '新的随笔',
       content: input.content || '',
+      contentFormat: input.contentFormat || 'markdown',
+      contentJson: input.contentJson || '',
       summary: input.summary || '',
       categoryId: input.categoryId || defaultCategoryId,
       tags: input.tags || [],
       status: input.status || 'draft',
       createdAt: now(),
       updatedAt: now(),
+      attachments: (input.attachments || []).map((attachment, index) => ({
+        ...attachment,
+        noteId: undefined,
+        orderNum: index,
+      })),
     };
     snapshot.essays.unshift(essay);
     writeSnapshot(snapshot);
     return essay;
   },
-  async updateEssay(input: Partial<Essay> & {id: string}) {
+  async updateEssay(input: EssayMutation & {id: string}) {
     const snapshot = readSnapshot();
+    const {attachmentIds: _attachmentIds, ...updates} = input;
     snapshot.essays = snapshot.essays.map((essay) =>
-      essay.id === input.id ? {...essay, ...input, updatedAt: now()} : essay,
+      essay.id === input.id ? {...essay, ...updates, updatedAt: now()} : essay,
     );
     writeSnapshot(snapshot);
     return snapshot.essays.find((essay) => essay.id === input.id)!;
@@ -413,6 +429,28 @@ export const localDb = {
     );
     writeSnapshot(snapshot);
     return snapshot.essays.find((essay) => essay.id === idValue)!;
+  },
+  async importEssayAttachment(input: {
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    width: number;
+    height: number;
+    previewDataUrl: string;
+  }): Promise<EssayAttachment> {
+    const timestamp = now();
+    return {
+      id: `web-${id()}`,
+      fileName: input.fileName,
+      mimeType: input.mimeType,
+      sizeBytes: input.sizeBytes,
+      width: input.width,
+      height: input.height,
+      orderNum: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      previewDataUrl: input.previewDataUrl,
+    };
   },
   async updateSettings(input: Partial<Settings>) {
     const snapshot = readSnapshot();

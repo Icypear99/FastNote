@@ -44,10 +44,28 @@ CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
+  content_format TEXT NOT NULL DEFAULT 'markdown',
+  content_json TEXT NOT NULL DEFAULT '',
   summary TEXT NOT NULL DEFAULT '',
   category_id TEXT,
   tags TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'draft',
+  archived_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS note_attachments (
+  id TEXT PRIMARY KEY,
+  note_id TEXT,
+  file_name TEXT NOT NULL,
+  storage_path TEXT NOT NULL,
+  thumbnail_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  width INTEGER NOT NULL DEFAULT 0,
+  height INTEGER NOT NULL DEFAULT 0,
+  order_num INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

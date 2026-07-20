@@ -73,6 +73,8 @@ export interface Essay {
   id: string;
   title: string;
   content: string;
+  contentFormat: 'markdown' | 'tiptap-json';
+  contentJson: string;
   summary: string;
   categoryId?: string;
   tags: string[];
@@ -80,7 +82,25 @@ export interface Essay {
   archivedAt?: string;
   createdAt: string;
   updatedAt: string;
+  attachments: EssayAttachment[];
 }
+
+export interface EssayAttachment {
+  id: string;
+  noteId?: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  width: number;
+  height: number;
+  orderNum: number;
+  archivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  previewDataUrl: string;
+}
+
+export type EssayMutation = Partial<Essay> & {attachmentIds?: string[]};
 
 export interface AiConversation {
   id: string;

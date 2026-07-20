@@ -57,6 +57,13 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
     ensure_column(conn, "tasks", "project_id", "TEXT")?;
     ensure_column(conn, "tasks", "progress", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(conn, "notes", "category_id", "TEXT")?;
+    ensure_column(
+        conn,
+        "notes",
+        "content_format",
+        "TEXT NOT NULL DEFAULT 'markdown'",
+    )?;
+    ensure_column(conn, "notes", "content_json", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "user_profile", "age", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(
         conn,
@@ -65,6 +72,25 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         "TEXT NOT NULL DEFAULT ''",
     )?;
     ensure_column(conn, "user_profile", "gender", "TEXT NOT NULL DEFAULT ''")?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS note_attachments (
+            id TEXT PRIMARY KEY,
+            note_id TEXT,
+            file_name TEXT NOT NULL,
+            storage_path TEXT NOT NULL,
+            thumbnail_path TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            width INTEGER NOT NULL DEFAULT 0,
+            height INTEGER NOT NULL DEFAULT 0,
+            order_num INTEGER NOT NULL DEFAULT 0,
+            archived_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 

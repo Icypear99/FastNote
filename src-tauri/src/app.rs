@@ -30,6 +30,7 @@ pub(crate) fn run() {
             essays::essay_category_create,
             essays::essay_category_update,
             essays::essay_category_archive,
+            essays::essay_attachment_import,
             essays::essay_create,
             essays::essay_update,
             essays::essay_archive,

@@ -70,6 +70,8 @@ pub(crate) struct Essay {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) content: String,
+    pub(crate) content_format: String,
+    pub(crate) content_json: String,
     pub(crate) summary: String,
     pub(crate) category_id: Option<String>,
     pub(crate) tags: Vec<String>,
@@ -77,6 +79,28 @@ pub(crate) struct Essay {
     pub(crate) archived_at: Option<String>,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
+    pub(crate) attachments: Vec<EssayAttachment>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EssayAttachment {
+    pub(crate) id: String,
+    pub(crate) note_id: Option<String>,
+    pub(crate) file_name: String,
+    #[serde(skip_serializing)]
+    pub(crate) storage_path: String,
+    #[serde(skip_serializing)]
+    pub(crate) thumbnail_path: String,
+    pub(crate) mime_type: String,
+    pub(crate) size_bytes: i64,
+    pub(crate) width: i64,
+    pub(crate) height: i64,
+    pub(crate) order_num: i64,
+    pub(crate) archived_at: Option<String>,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) preview_data_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -206,11 +230,14 @@ pub(crate) struct EssayPatch {
     pub(crate) id: Option<String>,
     pub(crate) title: Option<String>,
     pub(crate) content: Option<String>,
+    pub(crate) content_format: Option<String>,
+    pub(crate) content_json: Option<String>,
     pub(crate) summary: Option<String>,
     pub(crate) category_id: Option<String>,
     pub(crate) tags: Option<Vec<String>>,
     pub(crate) status: Option<String>,
     pub(crate) archived_at: Option<String>,
+    pub(crate) attachment_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
