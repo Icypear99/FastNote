@@ -64,6 +64,7 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         "TEXT NOT NULL DEFAULT 'markdown'",
     )?;
     ensure_column(conn, "notes", "content_json", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(conn, "notes", "is_pinned", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(conn, "user_profile", "age", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(
         conn,

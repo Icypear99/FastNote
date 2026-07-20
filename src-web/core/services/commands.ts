@@ -93,6 +93,9 @@ export const commands = {
     call<Essay>('essay_update', {essay}, () => localDb.updateEssay(essay)),
   archiveEssay: (id: string) => call<Essay>('essay_archive', {id}, () => localDb.archiveEssay(id)),
   restoreEssay: (id: string) => call<Essay>('essay_restore', {id}, () => localDb.restoreEssay(id)),
+  deleteEssayPermanently: (id: string) =>
+    call<void>('essay_delete_permanently', {id}, () => localDb.deleteEssayPermanently(id)),
+  emptyEssayTrash: () => call<number>('essay_trash_empty', {}, () => localDb.emptyEssayTrash()),
   updateSettings: (settings: Partial<Settings>) =>
     call<Settings>('settings_update', {settings}, () => localDb.updateSettings(settings)),
   sendMessage: (content: string, conversationId?: string) =>

@@ -128,6 +128,7 @@ const seedEssays = (): Essay[] => [
     categoryId: DEFAULT_CATEGORY_ID,
     tags: ['备忘'],
     status: 'draft',
+    isPinned: false,
     createdAt: now(),
     updatedAt: now(),
     attachments: [],
@@ -156,6 +157,7 @@ const normalizeSnapshot = (input: LegacySnapshot): WorkspaceSnapshot => {
     categoryId: essay.categoryId || defaultCategoryId,
     contentFormat: essay.contentFormat || (essay.contentJson ? 'tiptap-json' : 'markdown'),
     contentJson: essay.contentJson || '',
+    isPinned: Boolean(essay.isPinned),
     attachments: essay.attachments || [],
   }));
   return {
@@ -398,6 +400,7 @@ export const localDb = {
       categoryId: input.categoryId || defaultCategoryId,
       tags: input.tags || [],
       status: input.status || 'draft',
+      isPinned: Boolean(input.isPinned),
       createdAt: now(),
       updatedAt: now(),
       attachments: (input.attachments || []).map((attachment, index) => ({
@@ -429,6 +432,21 @@ export const localDb = {
     );
     writeSnapshot(snapshot);
     return snapshot.essays.find((essay) => essay.id === idValue)!;
+  },
+  async deleteEssayPermanently(idValue: string) {
+    const snapshot = readSnapshot();
+    const essay = snapshot.essays.find((item) => item.id === idValue);
+    if (!essay) throw new Error('随笔不存在。');
+    if (!essay.archivedAt) throw new Error('只能永久删除回收站中的随笔。');
+    snapshot.essays = snapshot.essays.filter((item) => item.id !== idValue);
+    writeSnapshot(snapshot);
+  },
+  async emptyEssayTrash() {
+    const snapshot = readSnapshot();
+    const deletedCount = snapshot.essays.filter((essay) => essay.archivedAt).length;
+    snapshot.essays = snapshot.essays.filter((essay) => !essay.archivedAt);
+    writeSnapshot(snapshot);
+    return deletedCount;
   },
   async importEssayAttachment(input: {
     fileName: string;

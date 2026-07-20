@@ -36,6 +36,10 @@ function tagSuggestionRenderer() {
     root.replaceChildren();
     root.setAttribute('role', 'listbox');
     root.setAttribute('aria-label', '标签建议');
+    const heading = document.createElement('span');
+    heading.className = 'essay-tag-suggestion-heading';
+    heading.textContent = '请选择标签';
+    root.append(heading);
     const items = props.items;
     if (!items.length) {
       const empty = document.createElement('span');
@@ -48,7 +52,7 @@ function tagSuggestionRenderer() {
     items.forEach((item, index) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'essay-tag-suggestion-item';
+      button.className = `essay-tag-suggestion-item ${item.isNew ? 'is-new' : 'is-existing'}`;
       button.setAttribute('role', 'option');
       button.setAttribute('aria-selected', String(index === selectedIndex));
       button.textContent = item.isNew ? `创建 #${item.label}` : `#${item.label}`;
@@ -101,7 +105,11 @@ function tagSuggestionRenderer() {
   };
 }
 
-export function createTagExtension(getTags: () => string[], enableSuggestion = true) {
+export function createTagExtension(
+  getTags: () => string[],
+  enableSuggestion = true,
+  onTagSelected?: (tag: string) => void,
+) {
   return Node.create({
     name: 'tag',
     group: 'inline',
@@ -139,14 +147,8 @@ export function createTagExtension(getTags: () => string[], enableSuggestion = t
             return existing;
           },
           command: ({editor, range, props: item}) => {
-            editor
-              .chain()
-              .focus()
-              .insertContentAt(range, [
-                {type: 'tag', attrs: {label: item.label}},
-                {type: 'text', text: ' '},
-              ])
-              .run();
+            onTagSelected?.(item.label);
+            editor.chain().focus().deleteRange(range).run();
           },
           render: tagSuggestionRenderer,
         }),
@@ -180,7 +182,11 @@ export const MemoReference = Node.create({
   },
 });
 
-export function editorExtensions(getTags: () => string[], placeholder = '现在的想法是...') {
+export function editorExtensions(
+  getTags: () => string[],
+  placeholder = '现在的想法是...',
+  onTagSelected?: (tag: string) => void,
+) {
   return [
     StarterKit.configure({
       heading: {levels: [1, 2, 3]},
@@ -189,7 +195,7 @@ export function editorExtensions(getTags: () => string[], placeholder = '现在�
     Highlight.configure({multicolor: false}),
     Underline,
     Placeholder.configure({placeholder}),
-    createTagExtension(getTags),
+    createTagExtension(getTags, true, onTagSelected),
     MemoReference,
   ];
 }
@@ -265,20 +271,29 @@ export function parseEditorDocument(content: string, contentFormat: string, cont
   return legacyMarkdownToDocument(content);
 }
 
-export function collectDocumentTags(document: JSONContent, plainText: string) {
+export function collectDocumentTags(document: JSONContent) {
   const tags: string[] = [];
   const visit = (node: JSONContent) => {
     if (node.type === 'tag' && node.attrs?.label) tags.push(String(node.attrs.label));
     node.content?.forEach(visit);
   };
   visit(document);
-  for (const match of plainText.matchAll(/(?:^|\s)#([^\s#]+)/gu)) tags.push(match[1]);
   return normalizeTags(tags);
+}
+
+export function stripDocumentTags(document: JSONContent): JSONContent {
+  const strip = (node: JSONContent): JSONContent | undefined => {
+    if (node.type === 'tag') return undefined;
+    const content = node.content?.map(strip).filter((item): item is JSONContent => Boolean(item));
+    return {...node, content: content?.length ? content : undefined};
+  };
+  return strip(document) ?? {type: 'doc', content: [paragraph('')]};
 }
 
 export function richTextHtml(contentJson: string) {
   try {
-    const html = generateHTML(JSON.parse(contentJson) as JSONContent, viewerExtensions());
+    const document = stripDocumentTags(JSON.parse(contentJson) as JSONContent);
+    const html = generateHTML(document, viewerExtensions());
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'mark', 's', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'a', 'span', 'hr'],
       ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'data-essay-tag', 'data-memo-reference'],

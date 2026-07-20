@@ -25,13 +25,16 @@ import {
   editorExtensions,
   parseEditorDocument,
   richTextHtml,
+  stripDocumentTags,
   type RichTextValue,
 } from './editorDocument';
+import {normalizeTags, tagKey} from '../../../shared/utils/essay';
 
 interface EditorSourceValue {
   content: string;
   contentFormat: 'markdown' | 'tiptap-json';
   contentJson: string;
+  tags: string[];
 }
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
@@ -67,18 +70,36 @@ export function RichTextEditor({
   onError: (message: string) => void;
 }) {
   const tagsRef = useRef(knownTags);
+  const selectedTagsRef = useRef(normalizeTags(value.tags));
+  const submitRef = useRef(onSubmit);
+  const canSubmitRef = useRef(Boolean(value.content.trim() || attachments.length));
+  const isDisabledRef = useRef(isDisabled);
+  const isSubmittingRef = useRef(isSubmitting);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const externalKeyRef = useRef('');
   const [isImporting, setIsImporting] = useState(false);
   const [, setEditorVersion] = useState(0);
   tagsRef.current = knownTags;
+  submitRef.current = onSubmit;
+  canSubmitRef.current = Boolean(value.content.trim() || attachments.length);
+  isDisabledRef.current = isDisabled;
+  isSubmittingRef.current = isSubmitting;
 
   const initialDocument = useMemo(
     () => parseEditorDocument(value.content, value.contentFormat, value.contentJson),
     // The editor owns changes after mount; external synchronization is handled below.
     [],
   );
-  const extensions = useMemo(() => editorExtensions(() => tagsRef.current, placeholder), [placeholder]);
+  const extensions = useMemo(
+    () => editorExtensions(
+      () => tagsRef.current,
+      placeholder,
+      (tag) => {
+        selectedTagsRef.current = normalizeTags([...selectedTagsRef.current, tag]);
+      },
+    ),
+    [placeholder],
+  );
   const editor = useEditor({
     extensions,
     content: initialDocument,
@@ -89,15 +110,26 @@ export function RichTextEditor({
         class: 'essay-tiptap-editor',
         'aria-label': '随笔正文',
       },
+      handleKeyDown: (_view, event) => {
+        if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return false;
+        if (document.querySelector('.essay-tag-suggestion')) return false;
+        event.preventDefault();
+        if (!isDisabledRef.current && !isSubmittingRef.current && canSubmitRef.current) {
+          void submitRef.current?.();
+        }
+        return true;
+      },
     },
     onUpdate: ({editor: currentEditor}) => {
-      const document = currentEditor.getJSON();
+      const editorDocument = currentEditor.getJSON();
+      const document = stripDocumentTags(editorDocument);
       const content = currentEditor.getText({blockSeparator: '\n'});
+      canSubmitRef.current = Boolean(content.trim() || attachments.length);
       const next: RichTextValue = {
         content,
         contentFormat: 'tiptap-json',
         contentJson: JSON.stringify(document),
-        tags: collectDocumentTags(document, content),
+        tags: normalizeTags([...selectedTagsRef.current, ...collectDocumentTags(editorDocument)]),
       };
       externalKeyRef.current = next.contentJson;
       onChange(next);
@@ -108,6 +140,10 @@ export function RichTextEditor({
   useEffect(() => {
     editor?.setEditable(!isDisabled);
   }, [editor, isDisabled]);
+
+  useEffect(() => {
+    selectedTagsRef.current = normalizeTags(value.tags);
+  }, [value.tags]);
 
   useEffect(() => {
     if (!editor) return;
@@ -179,6 +215,21 @@ export function RichTextEditor({
 
   const canSubmit = Boolean(value.content.trim() || attachments.length);
 
+  const removeSelectedTag = (tag: string) => {
+    if (!editor) return;
+    const tags = selectedTagsRef.current.filter((item) => tagKey(item) !== tagKey(tag));
+    selectedTagsRef.current = tags;
+    const document = stripDocumentTags(editor.getJSON());
+    const next: RichTextValue = {
+      content: editor.getText({blockSeparator: '\n'}),
+      contentFormat: 'tiptap-json',
+      contentJson: JSON.stringify(document),
+      tags,
+    };
+    externalKeyRef.current = next.contentJson;
+    onChange(next);
+  };
+
   return (
     <section className={`essay-rich-editor ${editor?.isFocused ? 'is-focused' : ''} ${isDisabled ? 'is-disabled' : ''}`}>
       <EditorContent
@@ -190,6 +241,17 @@ export function RichTextEditor({
           void importImages(images);
         }}
       />
+
+      {value.tags.length > 0 && (
+        <HStack className="essay-editor-selected-tags" gap={1} wrap="wrap" aria-label="已选标签">
+          {normalizeTags(value.tags).map((tag) => (
+            <button key={tagKey(tag)} type="button" aria-label={`移除标签 ${tag}`} onClick={() => removeSelectedTag(tag)}>
+              <span>#{tag}</span>
+              <X aria-hidden="true" />
+            </button>
+          ))}
+        </HStack>
+      )}
 
       <AttachmentTray attachments={attachments} isEditable={!isDisabled} onRemove={onRemoveAttachment} />
 
@@ -323,16 +385,18 @@ export function RichTextEditor({
           </Popover>
         </HStack>
         {onSubmit && (
-          <IconButton
-            label={submitLabel}
-            tooltip={submitLabel}
-            icon={<Send aria-hidden="true" />}
-            variant="primary"
-            size="sm"
-            isLoading={isSubmitting}
-            isDisabled={!canSubmit || isDisabled}
-            onClick={() => void onSubmit()}
-          />
+          <span className="essay-submit-action">
+            <IconButton
+              label={submitLabel}
+              tooltip="发送保存 Enter · 换行 Shift+Enter"
+              icon={<Send aria-hidden="true" />}
+              variant="primary"
+              size="sm"
+              isLoading={isSubmitting}
+              isDisabled={!canSubmit || isDisabled}
+              onClick={() => void onSubmit()}
+            />
+          </span>
         )}
       </HStack>
     </section>

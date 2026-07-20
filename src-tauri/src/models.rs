@@ -76,6 +76,7 @@ pub(crate) struct Essay {
     pub(crate) category_id: Option<String>,
     pub(crate) tags: Vec<String>,
     pub(crate) status: String,
+    pub(crate) is_pinned: bool,
     pub(crate) archived_at: Option<String>,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
@@ -236,6 +237,7 @@ pub(crate) struct EssayPatch {
     pub(crate) category_id: Option<String>,
     pub(crate) tags: Option<Vec<String>>,
     pub(crate) status: Option<String>,
+    pub(crate) is_pinned: Option<bool>,
     pub(crate) archived_at: Option<String>,
     pub(crate) attachment_ids: Option<Vec<String>>,
 }

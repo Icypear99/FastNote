@@ -1,11 +1,14 @@
-import {useMemo, useState} from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
+import {createPortal} from 'react-dom';
 import {differenceInCalendarDays} from 'date-fns';
 import {
   Hash,
   Inbox,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   PencilLine,
+  Pin,
   RotateCcw,
   Save,
   Tags,
@@ -17,7 +20,6 @@ import {Button} from '@astryxdesign/core/Button';
 import {EmptyState} from '@astryxdesign/core/EmptyState';
 import {HStack} from '@astryxdesign/core/HStack';
 import {Markdown} from '@astryxdesign/core/Markdown';
-import {MoreMenu} from '@astryxdesign/core/MoreMenu';
 import {Timestamp} from '@astryxdesign/core/Timestamp';
 import {Token} from '@astryxdesign/core/Token';
 import {VStack} from '@astryxdesign/core/VStack';
@@ -72,6 +74,23 @@ function sameAttachmentIds(left: EssayDraft['attachments'], right: EssayDraft['a
   return left.length === right.length && left.every((attachment, index) => attachment.id === right[index]?.id);
 }
 
+function essayCharacterCount(content: string) {
+  return Array.from(content.replace(/\s/g, '')).length;
+}
+
+function formatEssayEditedAt(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat('sv-SE', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
 export default function EssaysPage({
   essays,
   run,
@@ -87,10 +106,15 @@ export default function EssaysPage({
   const [isPublishing, setIsPublishing] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
   const [savingId, setSavingId] = useState<string>();
+  const [pinningId, setPinningId] = useState<string>();
   const [restoringId, setRestoringId] = useState<string>();
   const [pendingArchive, setPendingArchive] = useState<Essay>();
+  const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Essay>();
+  const [isEmptyTrashConfirmOpen, setIsEmptyTrashConfirmOpen] = useState(false);
   const [pendingDiscard, setPendingDiscard] = useState<Essay>();
   const [isArchiving, setIsArchiving] = useState(false);
+  const [permanentlyDeletingId, setPermanentlyDeletingId] = useState<string>();
+  const [isEmptyingTrash, setIsEmptyingTrash] = useState(false);
   const [actionError, setActionError] = useState('');
 
   const activeEssays = useMemo(() => essays.filter((essay) => !essay.archivedAt), [essays]);
@@ -118,7 +142,10 @@ export default function EssaysPage({
     const filtered = filter.startsWith('tag:')
       ? source.filter((essay) => essay.tags.some((tag) => tagKey(tag) === filter.slice(4)))
       : source;
-    return [...filtered].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+    return [...filtered].sort((left, right) => {
+      if (filter !== 'trash' && left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1;
+      return Date.parse(right.createdAt) - Date.parse(left.createdAt);
+    });
   }, [activeEssays, archivedEssays, filter]);
 
   const publishEssay = async () => {
@@ -208,6 +235,58 @@ export default function EssaysPage({
     }
   };
 
+  const toggleEssayPin = async (essay: Essay) => {
+    if (pinningId) return;
+    setActionError('');
+    setPinningId(essay.id);
+    try {
+      await run(commands.updateEssay({id: essay.id, isPinned: !essay.isPinned}));
+      feedback.success(essay.isPinned ? '已取消置顶。' : '随笔已置顶。', `essay-pin-${essay.id}`);
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionError(message);
+      feedback.error(message, 'essay-pin-error');
+    } finally {
+      setPinningId(undefined);
+    }
+  };
+
+  const deleteEssayPermanently = async () => {
+    if (!pendingPermanentDelete || permanentlyDeletingId) return;
+    setActionError('');
+    setPermanentlyDeletingId(pendingPermanentDelete.id);
+    try {
+      await run(commands.deleteEssayPermanently(pendingPermanentDelete.id));
+      removeDraft(pendingPermanentDelete.id);
+      feedback.success('随笔已永久删除。', 'essay-permanent-delete-success');
+      setPendingPermanentDelete(undefined);
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionError(message);
+      feedback.error(message, 'essay-permanent-delete-error');
+    } finally {
+      setPermanentlyDeletingId(undefined);
+    }
+  };
+
+  const emptyEssayTrash = async () => {
+    if (isEmptyingTrash || archivedEssays.length === 0) return;
+    setActionError('');
+    setIsEmptyingTrash(true);
+    try {
+      const deletedCount = await run(commands.emptyEssayTrash());
+      archivedEssays.forEach((essay) => removeDraft(essay.id));
+      feedback.success(`已永久删除 ${deletedCount} 篇随笔。`, 'essay-empty-trash-success');
+      setIsEmptyTrashConfirmOpen(false);
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionError(message);
+      feedback.error(message, 'essay-empty-trash-error');
+    } finally {
+      setIsEmptyingTrash(false);
+    }
+  };
+
   const cancelEditing = (essay: Essay) => {
     const draft = drafts[essay.id];
     if (
@@ -268,12 +347,17 @@ export default function EssaysPage({
               <span className="section-label">随笔</span>
               <h2>{currentTitle}</h2>
             </section>
-            {!isTrash && (
+            {isTrash && archivedEssays.length > 0 ? (
+              <button className="essay-empty-trash-btn" type="button" disabled={isEmptyingTrash} onClick={() => setIsEmptyTrashConfirmOpen(true)}>
+                <Trash2 aria-hidden="true" />
+                清空回收站
+              </button>
+            ) : !isTrash ? (
               <button className="primary-btn task-add-record-btn" type="button" onClick={focusComposer}>
                 <PencilLine aria-hidden="true" />
                 写随笔
               </button>
-            )}
+            ) : null}
           </header>
           {actionError && (
             <VStack className="task-feedback-stack" gap={2} padding={3}>
@@ -310,6 +394,8 @@ export default function EssaysPage({
                 editingId={editingId}
                 essays={visibleEssays}
                 filter={filter}
+                permanentlyDeletingId={permanentlyDeletingId}
+                pinningId={pinningId}
                 restoringId={restoringId}
                 savingId={savingId}
                 knownTags={knownTags}
@@ -319,6 +405,8 @@ export default function EssaysPage({
                 onChangeDraft={updateDraft}
                 onClearFilter={() => setFilter('all')}
                 onEdit={setEditingId}
+                onDeletePermanently={setPendingPermanentDelete}
+                onTogglePin={toggleEssayPin}
                 onRestore={restoreEssay}
                 onSave={saveEssay}
                 onImportImages={importImages}
@@ -347,6 +435,24 @@ export default function EssaysPage({
         actionLabel="放弃草稿"
         cancelLabel="继续编辑"
         onAction={discardDraft}
+      />
+      <AppConfirmDialog
+        isOpen={Boolean(pendingPermanentDelete)}
+        onOpenChange={(isOpen) => !isOpen && !permanentlyDeletingId && setPendingPermanentDelete(undefined)}
+        title="永久删除这篇随笔？"
+        description="随笔及其中的图片将被永久删除，此操作无法撤销。"
+        actionLabel="永久删除"
+        isLoading={Boolean(permanentlyDeletingId)}
+        onAction={deleteEssayPermanently}
+      />
+      <AppConfirmDialog
+        isOpen={isEmptyTrashConfirmOpen}
+        onOpenChange={(isOpen) => !isEmptyingTrash && setIsEmptyTrashConfirmOpen(isOpen)}
+        title="清空回收站？"
+        description={`回收站中的 ${archivedEssays.length} 篇随笔及其中的图片将被永久删除，此操作无法撤销。`}
+        actionLabel="清空回收站"
+        isLoading={isEmptyingTrash}
+        onAction={emptyEssayTrash}
       />
     </>
   );
@@ -484,6 +590,8 @@ function EssayFeed({
   editingId,
   essays,
   filter,
+  permanentlyDeletingId,
+  pinningId,
   restoringId,
   savingId,
   knownTags,
@@ -493,6 +601,8 @@ function EssayFeed({
   onChangeDraft,
   onClearFilter,
   onEdit,
+  onDeletePermanently,
+  onTogglePin,
   onError,
   onImportImages,
   onRestore,
@@ -504,6 +614,8 @@ function EssayFeed({
   editingId?: string;
   essays: Essay[];
   filter: EssayFilter;
+  permanentlyDeletingId?: string;
+  pinningId?: string;
   restoringId?: string;
   savingId?: string;
   knownTags: string[];
@@ -513,6 +625,8 @@ function EssayFeed({
   onChangeDraft: (key: string, draft: EssayDraftInput) => void;
   onClearFilter: () => void;
   onEdit: (id: string) => void;
+  onDeletePermanently: (essay: Essay) => void;
+  onTogglePin: (essay: Essay) => Promise<void>;
   onError: (message: string) => void;
   onImportImages: (key: string, draft: EssayDraft, files: File[]) => Promise<void>;
   onRestore: (essay: Essay) => Promise<void>;
@@ -580,25 +694,36 @@ function EssayFeed({
             ) : (
               <VStack gap={3}>
                 <HStack className="essay-feed-item-header" gap={2} hAlign="between" vAlign="center">
-                  <Timestamp value={essay.createdAt} format="date_time" hasTooltip={false} />
                   {filter === 'trash' ? (
-                    <Button
-                      label="恢复"
-                      icon={<RotateCcw aria-hidden="true" />}
-                      size="sm"
-                      variant="ghost"
-                      isLoading={restoringId === essay.id}
-                      onClick={() => void onRestore(essay)}
+                    <span className="essay-deleted-at">
+                      删除于 <Timestamp value={essay.archivedAt ?? essay.updatedAt} format="date_time" hasTooltip={false} />
+                    </span>
+                  ) : (
+                    <HStack className="essay-published-meta" gap={1} vAlign="center">
+                      <Timestamp value={essay.createdAt} format="date_time" hasTooltip={false} />
+                      {essay.isPinned && (
+                        <span className="essay-pinned-label">
+                          <Pin aria-hidden="true" />
+                          已置顶
+                        </span>
+                      )}
+                    </HStack>
+                  )}
+                  {filter === 'trash' ? (
+                    <EssayActionsMenu
+                      mode="trash"
+                      essay={essay}
+                      isDisabled={Boolean(restoringId) || Boolean(permanentlyDeletingId)}
+                      onRestore={onRestore}
+                      onDeletePermanently={onDeletePermanently}
                     />
                   ) : (
-                    <MoreMenu
-                      label="随笔操作"
-                      size="sm"
-                      isDisabled={Boolean(savingId)}
-                      items={[
-                        {label: '编辑', icon: <PencilLine aria-hidden="true" />, onClick: () => onEdit(essay.id)},
-                        {label: '删除', icon: <Trash2 aria-hidden="true" />, onClick: () => onArchive(essay)},
-                      ]}
+                    <EssayActionsMenu
+                      essay={essay}
+                      isDisabled={Boolean(savingId) || Boolean(pinningId)}
+                      onArchive={onArchive}
+                      onEdit={onEdit}
+                      onTogglePin={onTogglePin}
                     />
                   )}
                 </HStack>
@@ -629,5 +754,147 @@ function EssayFeed({
         );
       })}
     </VStack>
+  );
+}
+
+function EssayActionsMenu({
+  essay,
+  isDisabled,
+  ...actions
+}: {
+  essay: Essay;
+  isDisabled: boolean;
+} & (
+  | {
+      mode: 'trash';
+      onDeletePermanently: (essay: Essay) => void;
+      onRestore: (essay: Essay) => Promise<void>;
+    }
+  | {
+      mode?: 'active';
+      onArchive: (essay: Essay) => void;
+      onEdit: (id: string) => void;
+      onTogglePin: (essay: Essay) => Promise<void>;
+    }
+)) {
+  const isTrashMenu = actions.mode === 'trash';
+  const menuLabel = isTrashMenu ? '回收站随笔操作' : '随笔操作';
+  const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({left: 0, top: 0});
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rootRef.current?.contains(event.target) &&
+        !menuRef.current?.contains(event.target)
+      ) {
+        setIsOpen(false);
+      }
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    const closeOnViewportChange = () => setIsOpen(false);
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', closeOnViewportChange);
+    document.addEventListener('scroll', closeOnViewportChange, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', closeOnViewportChange);
+      document.removeEventListener('scroll', closeOnViewportChange, true);
+    };
+  }, [isOpen]);
+
+  const runAction = (action: () => void) => {
+    setIsOpen(false);
+    action();
+  };
+
+  const toggleMenu = () => {
+    if (!isOpen) {
+      const triggerBounds = rootRef.current?.getBoundingClientRect();
+      if (triggerBounds) {
+        const menuWidth = 224;
+        const menuHeight = isTrashMenu ? 84 : 181;
+        const viewportMargin = 12;
+        const gap = 6;
+        const viewportWidth = document.documentElement.clientWidth;
+        const viewportHeight = document.documentElement.clientHeight;
+        const opensUpward = viewportHeight - triggerBounds.bottom < menuHeight + gap + viewportMargin;
+        setMenuPosition({
+          left: Math.min(
+            Math.max(viewportMargin, triggerBounds.right - menuWidth),
+            viewportWidth - menuWidth - viewportMargin,
+          ),
+          top: opensUpward
+            ? Math.max(viewportMargin, triggerBounds.top - menuHeight - gap)
+            : Math.min(viewportHeight - menuHeight - viewportMargin, triggerBounds.bottom + gap),
+        });
+      }
+    }
+    setIsOpen((value) => !value);
+  };
+
+  return (
+    <div ref={rootRef} className="essay-action-menu">
+      <button
+        className={`essay-action-menu-trigger ${isOpen ? 'active' : ''}`}
+        type="button"
+        title={menuLabel}
+        aria-label={menuLabel}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        disabled={isDisabled}
+        onClick={toggleMenu}
+      >
+        <MoreHorizontal aria-hidden="true" />
+      </button>
+      {isOpen && createPortal(
+        <section ref={menuRef} className="essay-action-menu-card" style={menuPosition} aria-label={`${menuLabel}菜单`}>
+          <div className="essay-action-menu-items" role="menu" aria-label={menuLabel}>
+            {isTrashMenu ? (
+              <>
+                <button type="button" role="menuitem" onClick={() => runAction(() => void actions.onRestore(essay))}>
+                  <RotateCcw aria-hidden="true" />
+                  恢复
+                </button>
+                <button className="danger" type="button" role="menuitem" onClick={() => runAction(() => actions.onDeletePermanently(essay))}>
+                  <Trash2 aria-hidden="true" />
+                  删除
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" role="menuitem" onClick={() => runAction(() => actions.onEdit(essay.id))}>
+                  <PencilLine aria-hidden="true" />
+                  编辑
+                </button>
+                <button type="button" role="menuitem" onClick={() => runAction(() => void actions.onTogglePin(essay))}>
+                  <Pin aria-hidden="true" />
+                  {essay.isPinned ? '取消置顶' : '置顶'}
+                </button>
+                <button className="danger" type="button" role="menuitem" onClick={() => runAction(() => actions.onArchive(essay))}>
+                  <Trash2 aria-hidden="true" />
+                  删除
+                </button>
+              </>
+            )}
+          </div>
+          {!isTrashMenu && (
+            <footer className="essay-action-menu-footer">
+              <span>字数统计：{essayCharacterCount(essay.content)}</span>
+              <span>编辑于 {formatEssayEditedAt(essay.updatedAt)}</span>
+            </footer>
+          )}
+        </section>,
+        document.body,
+      )}
+    </div>
   );
 }

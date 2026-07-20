@@ -79,6 +79,7 @@ export interface Essay {
   categoryId?: string;
   tags: string[];
   status: 'draft' | 'published';
+  isPinned: boolean;
   archivedAt?: string;
   createdAt: string;
   updatedAt: string;

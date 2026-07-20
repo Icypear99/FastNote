@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS notes (
   category_id TEXT,
   tags TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'draft',
+  is_pinned INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

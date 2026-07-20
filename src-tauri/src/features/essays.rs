@@ -1,9 +1,10 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::{GenericImageView, ImageFormat};
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use tauri::State;
 
 use crate::database::DEFAULT_CATEGORY_ID;
@@ -155,8 +156,8 @@ pub(crate) fn essay_create(state: State<AppState>, essay: EssayPatch) -> Result<
         .map_err(|error| error.to_string())?;
     let transaction = conn.transaction().map_err(|error| error.to_string())?;
     transaction.execute(
-        "INSERT INTO notes (id, title, content, content_format, content_json, summary, category_id, tags, status, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+        "INSERT INTO notes (id, title, content, content_format, content_json, summary, category_id, tags, status, is_pinned, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
         params![
             id,
             essay.title.unwrap_or_else(|| "新的随笔".to_string()),
@@ -167,6 +168,7 @@ pub(crate) fn essay_create(state: State<AppState>, essay: EssayPatch) -> Result<
             empty_to_none(essay.category_id).unwrap_or_else(|| DEFAULT_CATEGORY_ID.to_string()),
             tags,
             essay.status.unwrap_or_else(|| "draft".to_string()),
+            essay.is_pinned.unwrap_or(false),
             timestamp
         ],
     )
@@ -193,8 +195,8 @@ pub(crate) fn essay_update(state: State<AppState>, essay: EssayPatch) -> Result<
     transaction
         .execute(
             "UPDATE notes SET title = ?1, content = ?2, content_format = ?3, content_json = ?4,
-        summary = ?5, category_id = ?6, tags = ?7, status = ?8, archived_at = ?9, updated_at = ?10
-        WHERE id = ?11",
+        summary = ?5, category_id = ?6, tags = ?7, status = ?8, is_pinned = ?9,
+        archived_at = ?10, updated_at = ?11 WHERE id = ?12",
             params![
                 essay.title.unwrap_or(current.title),
                 essay.content.unwrap_or(current.content),
@@ -204,6 +206,7 @@ pub(crate) fn essay_update(state: State<AppState>, essay: EssayPatch) -> Result<
                 next_category_id,
                 tags,
                 essay.status.unwrap_or(current.status),
+                essay.is_pinned.unwrap_or(current.is_pinned),
                 essay.archived_at.or(current.archived_at),
                 now(),
                 id
@@ -232,6 +235,7 @@ pub(crate) fn essay_archive(state: State<AppState>, id: String) -> Result<Essay,
             category_id: None,
             tags: None,
             status: None,
+            is_pinned: None,
             attachment_ids: None,
         },
     )
@@ -246,6 +250,118 @@ pub(crate) fn essay_restore(state: State<AppState>, id: String) -> Result<Essay,
     )
     .map_err(|error| error.to_string())?;
     read_essay(&conn, &id)
+}
+
+#[tauri::command]
+pub(crate) fn essay_delete_permanently(state: State<AppState>, id: String) -> Result<(), String> {
+    let mut conn = open_db(&state)?;
+    let files = read_attachment_paths(&conn, Some(&id))?;
+    delete_essay_record(&mut conn, &id)?;
+    remove_attachment_files(&state.db_path, files);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn essay_trash_empty(state: State<AppState>) -> Result<usize, String> {
+    let mut conn = open_db(&state)?;
+    let files = read_attachment_paths(&conn, None)?;
+    let deleted_count = empty_essay_trash_records(&mut conn)?;
+    remove_attachment_files(&state.db_path, files);
+    Ok(deleted_count)
+}
+
+fn delete_essay_record(conn: &mut Connection, id: &str) -> Result<(), String> {
+    let archived_at = conn
+        .query_row(
+            "SELECT archived_at FROM notes WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    match archived_at {
+        None => return Err("随笔不存在。".to_string()),
+        Some(None) => return Err("只能永久删除回收站中的随笔。".to_string()),
+        Some(Some(_)) => {}
+    }
+
+    let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    transaction
+        .execute("DELETE FROM note_attachments WHERE note_id = ?1", params![id])
+        .map_err(|error| error.to_string())?;
+    transaction
+        .execute(
+            "DELETE FROM notes WHERE id = ?1 AND archived_at IS NOT NULL",
+            params![id],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+fn empty_essay_trash_records(conn: &mut Connection) -> Result<usize, String> {
+    let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    transaction
+        .execute(
+            "DELETE FROM note_attachments
+             WHERE note_id IN (SELECT id FROM notes WHERE archived_at IS NOT NULL)",
+            [],
+        )
+        .map_err(|error| error.to_string())?;
+    let deleted_count = transaction
+        .execute("DELETE FROM notes WHERE archived_at IS NOT NULL", [])
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(deleted_count)
+}
+
+fn read_attachment_paths(
+    conn: &Connection,
+    note_id: Option<&str>,
+) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let (sql, parameter): (&str, Option<&str>) = match note_id {
+        Some(id) => (
+            "SELECT storage_path, thumbnail_path FROM note_attachments WHERE note_id = ?1",
+            Some(id),
+        ),
+        None => (
+            "SELECT attachments.storage_path, attachments.thumbnail_path
+             FROM note_attachments attachments
+             INNER JOIN notes ON notes.id = attachments.note_id
+             WHERE notes.archived_at IS NOT NULL",
+            None,
+        ),
+    };
+    let mut statement = conn.prepare(sql).map_err(|error| error.to_string())?;
+    let map_row = |row: &rusqlite::Row| {
+        Ok((PathBuf::from(row.get::<_, String>(0)?), PathBuf::from(row.get::<_, String>(1)?)))
+    };
+    let paths = if let Some(id) = parameter {
+        statement.query_map(params![id], map_row)
+    } else {
+        statement.query_map([], map_row)
+    }
+    .map_err(|error| error.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| error.to_string())?;
+    Ok(paths)
+}
+
+fn remove_attachment_files(db_path: &Path, files: Vec<(PathBuf, PathBuf)>) {
+    let Some(parent) = db_path.parent() else {
+        return;
+    };
+    let root = parent.join("attachments");
+    for path in files.into_iter().flat_map(|(original, thumbnail)| [original, thumbnail]) {
+        if !path.starts_with(&root) {
+            eprintln!("Skipped attachment outside managed directory: {}", path.display());
+            continue;
+        }
+        if let Err(error) = fs::remove_file(&path) {
+            if error.kind() != ErrorKind::NotFound {
+                eprintln!("Failed to remove attachment {}: {error}", path.display());
+            }
+        }
+    }
 }
 
 pub(crate) fn read_essay_category(conn: &Connection, id: &str) -> Result<EssayCategory, String> {
@@ -285,7 +401,7 @@ fn map_essay_category(row: &rusqlite::Row) -> rusqlite::Result<EssayCategory> {
 
 pub(crate) fn read_essay(conn: &Connection, id: &str) -> Result<Essay, String> {
     let mut essay = conn.query_row(
-        "SELECT id, title, content, content_format, content_json, summary, category_id, tags, status, archived_at, created_at, updated_at
+        "SELECT id, title, content, content_format, content_json, summary, category_id, tags, status, is_pinned, archived_at, created_at, updated_at
         FROM notes WHERE id = ?1",
         params![id],
         map_essay,
@@ -299,7 +415,7 @@ pub(crate) fn read_essays(conn: &Connection) -> Result<Vec<Essay>, String> {
     let mut essays = {
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, content, content_format, content_json, summary, category_id, tags, status, archived_at, created_at, updated_at
+                "SELECT id, title, content, content_format, content_json, summary, category_id, tags, status, is_pinned, archived_at, created_at, updated_at
                 FROM notes ORDER BY updated_at DESC",
             )
             .map_err(|error| error.to_string())?;
@@ -329,9 +445,10 @@ fn map_essay(row: &rusqlite::Row) -> rusqlite::Result<Essay> {
         category_id: category_id.or_else(|| Some(DEFAULT_CATEGORY_ID.to_string())),
         tags: serde_json::from_str(&tags).unwrap_or_default(),
         status: row.get(8)?,
-        archived_at: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
+        is_pinned: row.get::<_, i64>(9)? == 1,
+        archived_at: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
         attachments: Vec::new(),
     })
 }
@@ -493,6 +610,31 @@ mod tests {
         connection
     }
 
+    fn permanent_delete_connection() -> Connection {
+        let connection = Connection::open_in_memory().expect("open permanent delete database");
+        connection
+            .execute_batch(
+                "CREATE TABLE notes (
+                    id TEXT PRIMARY KEY,
+                    archived_at TEXT
+                );
+                CREATE TABLE note_attachments (
+                    id TEXT PRIMARY KEY,
+                    note_id TEXT
+                );
+                INSERT INTO notes (id, archived_at) VALUES
+                    ('active', NULL),
+                    ('archived-a', 'deleted'),
+                    ('archived-b', 'deleted');
+                INSERT INTO note_attachments (id, note_id) VALUES
+                    ('active-image', 'active'),
+                    ('archived-image-a', 'archived-a'),
+                    ('archived-image-b', 'archived-b');",
+            )
+            .expect("create permanent delete schema");
+        connection
+    }
+
     #[test]
     fn attachment_file_name_is_confined_and_normalized() {
         assert_eq!(
@@ -563,5 +705,48 @@ mod tests {
             )
             .expect("read attachment after rollback");
         assert!(archived_at.is_none());
+    }
+
+    #[test]
+    fn permanent_delete_only_accepts_archived_essays() {
+        let mut connection = permanent_delete_connection();
+
+        assert!(delete_essay_record(&mut connection, "active").is_err());
+        delete_essay_record(&mut connection, "archived-a").expect("delete archived essay");
+
+        let active_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM notes WHERE id = 'active'", [], |row| row.get(0))
+            .expect("count active essay");
+        let archived_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM notes WHERE id = 'archived-a'", [], |row| row.get(0))
+            .expect("count deleted essay");
+        let archived_attachment_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM note_attachments WHERE note_id = 'archived-a'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count deleted attachments");
+
+        assert_eq!(active_count, 1);
+        assert_eq!(archived_count, 0);
+        assert_eq!(archived_attachment_count, 0);
+    }
+
+    #[test]
+    fn empty_trash_preserves_active_essays_and_attachments() {
+        let mut connection = permanent_delete_connection();
+
+        let deleted_count = empty_essay_trash_records(&mut connection).expect("empty essay trash");
+
+        let remaining_notes: i64 = connection
+            .query_row("SELECT COUNT(*) FROM notes", [], |row| row.get(0))
+            .expect("count remaining notes");
+        let remaining_attachments: i64 = connection
+            .query_row("SELECT COUNT(*) FROM note_attachments", [], |row| row.get(0))
+            .expect("count remaining attachments");
+        assert_eq!(deleted_count, 2);
+        assert_eq!(remaining_notes, 1);
+        assert_eq!(remaining_attachments, 1);
     }
 }

@@ -35,6 +35,8 @@ pub(crate) fn run() {
             essays::essay_update,
             essays::essay_archive,
             essays::essay_restore,
+            essays::essay_delete_permanently,
+            essays::essay_trash_empty,
             settings::settings_update,
             chat::chat_send
         ])
