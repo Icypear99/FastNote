@@ -1,18 +1,30 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
+import type {Editor} from '@tiptap/core';
 import {EditorContent, useEditor} from '@tiptap/react';
+import {splitBlock} from '@tiptap/pm/commands';
+import {splitListItem} from '@tiptap/pm/schema-list';
+import {canSplit} from '@tiptap/pm/transform';
 import {
   AtSign,
   Bold,
   Camera,
+  ChevronLeft,
+  ChevronRight,
   Hash,
   Highlighter,
   ImagePlus,
   List,
   ListOrdered,
+  Maximize2,
+  Minimize2,
+  RotateCcw,
+  RotateCw,
   Send,
   Type,
   Underline,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import {Button} from '@astryxdesign/core/Button';
 import {HStack} from '@astryxdesign/core/HStack';
@@ -39,6 +51,28 @@ interface EditorSourceValue {
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function isolateCurrentSoftBreakLine(editor: Editor) {
+  const {state, view} = editor;
+  const {$from} = state.selection;
+  if (!state.selection.empty || !$from.parent.isTextblock) return;
+
+  const parentStart = $from.start();
+  const breakPositions: number[] = [];
+  $from.parent.forEach((node, offset) => {
+    if (node.type.name === 'hardBreak') breakPositions.push(parentStart + offset);
+  });
+
+  const previousBreak = breakPositions.filter((position) => position < $from.pos).at(-1);
+  const nextBreak = breakPositions.find((position) => position >= $from.pos);
+  let transaction = state.tr;
+  [nextBreak, previousBreak].forEach((position) => {
+    if (position === undefined || !canSplit(transaction.doc, position)) return;
+    transaction = transaction.delete(position, position + 1).split(position);
+  });
+
+  if (transaction.docChanged) view.dispatch(transaction);
+}
 
 export function RichTextEditor({
   value,
@@ -110,10 +144,14 @@ export function RichTextEditor({
         class: 'essay-tiptap-editor',
         'aria-label': '随笔正文',
       },
-      handleKeyDown: (_view, event) => {
-        if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return false;
+      handleKeyDown: (view, event) => {
+        if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return false;
         if (document.querySelector('.essay-tag-suggestion')) return false;
         event.preventDefault();
+        if (event.shiftKey) {
+          const listItem = view.state.schema.nodes.listItem;
+          return (listItem && splitListItem(listItem)(view.state, view.dispatch)) || splitBlock(view.state, view.dispatch);
+        }
         if (!isDisabledRef.current && !isSubmittingRef.current && canSubmitRef.current) {
           void submitRef.current?.();
         }
@@ -214,6 +252,14 @@ export function RichTextEditor({
   };
 
   const canSubmit = Boolean(value.content.trim() || attachments.length);
+
+  const toggleList = (type: 'bulletList' | 'orderedList') => {
+    if (!editor) return;
+    isolateCurrentSoftBreakLine(editor);
+    const chain = editor.chain().focus();
+    if (type === 'bulletList') chain.toggleBulletList().run();
+    else chain.toggleOrderedList().run();
+  };
 
   const removeSelectedTag = (tag: string) => {
     if (!editor) return;
@@ -346,7 +392,7 @@ export function RichTextEditor({
             size="sm"
             variant={editor?.isActive('bulletList') ? 'secondary' : 'ghost'}
             isDisabled={isDisabled}
-            onClick={() => editor?.chain().focus().toggleBulletList().run()}
+            onClick={() => toggleList('bulletList')}
           />
           <IconButton
             label="有序列表"
@@ -355,7 +401,7 @@ export function RichTextEditor({
             size="sm"
             variant={editor?.isActive('orderedList') ? 'secondary' : 'ghost'}
             isDisabled={isDisabled}
-            onClick={() => editor?.chain().focus().toggleOrderedList().run()}
+            onClick={() => toggleList('orderedList')}
           />
           <span className="essay-toolbar-divider" aria-hidden="true" />
           <Popover
@@ -421,26 +467,102 @@ export function AttachmentTray({
   isEditable: boolean;
   onRemove: (id: string) => void;
 }) {
-  const [preview, setPreview] = useState<EssayAttachment>();
+  const [previewIndex, setPreviewIndex] = useState<number>();
+  const [scale, setScale] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [pan, setPan] = useState({x: 0, y: 0});
+  const [isDragging, setIsDragging] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const lightboxRef = useRef<HTMLElement>(null);
+  const dragRef = useRef<{pointerId: number; startX: number; startY: number; originX: number; originY: number} | undefined>(undefined);
+  const preview = previewIndex === undefined ? undefined : attachments[previewIndex];
+
+  const resetTransform = () => {
+    setScale(1);
+    setRotation(0);
+    setPan({x: 0, y: 0});
+  };
+
+  const closePreview = () => {
+    if (document.fullscreenElement === lightboxRef.current) void document.exitFullscreen();
+    setPreviewIndex(undefined);
+  };
+
+  const changePreview = (direction: -1 | 1) => {
+    setPreviewIndex((current) => {
+      if (current === undefined || attachments.length < 2) return current;
+      return (current + direction + attachments.length) % attachments.length;
+    });
+  };
+
+  const changeScale = (delta: number) => {
+    setScale((current) => {
+      const next = Math.min(4, Math.max(0.5, Number((current + delta).toFixed(2))));
+      if (next <= 1) setPan({x: 0, y: 0});
+      return next;
+    });
+  };
+
+  const rotate = (degrees: -90 | 90) => {
+    setRotation((current) => (current + degrees + 360) % 360);
+    setPan({x: 0, y: 0});
+  };
+
+  const toggleFullscreen = async () => {
+    if (!lightboxRef.current) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await lightboxRef.current.requestFullscreen();
+    } catch {
+      setIsFullscreen(false);
+    }
+  };
+
   useEffect(() => {
-    if (!preview) return undefined;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPreview(undefined);
+    if (previewIndex === undefined) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePreview();
+      if (event.key === 'ArrowLeft') changePreview(-1);
+      if (event.key === 'ArrowRight') changePreview(1);
+      if (event.key === '+' || event.key === '=') changeScale(0.25);
+      if (event.key === '-') changeScale(-0.25);
+      if (event.key === '0') resetTransform();
+      if (event.key.toLowerCase() === 'r') rotate(event.shiftKey ? -90 : 90);
     };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [preview]);
+    const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === lightboxRef.current);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, [previewIndex, attachments.length]);
+
+  useEffect(() => {
+    resetTransform();
+  }, [previewIndex]);
+
+  useEffect(() => {
+    setPreviewIndex((current) => {
+      if (current === undefined || current < attachments.length) return current;
+      return attachments.length ? attachments.length - 1 : undefined;
+    });
+  }, [attachments.length]);
+
   if (!attachments.length) return null;
   return (
     <>
       <ul className="essay-attachment-grid" aria-label="图片附件">
-        {attachments.map((attachment) => (
+        {attachments.map((attachment, index) => (
           <li className="essay-attachment-item" key={attachment.id}>
             <button
               className="essay-attachment-preview"
               type="button"
               aria-label={`预览 ${attachment.fileName}`}
-              onClick={() => setPreview(attachment)}
+              onClick={() => setPreviewIndex(index)}
             >
               <img src={attachment.previewDataUrl} alt={attachment.fileName} loading="lazy" />
             </button>
@@ -460,17 +582,88 @@ export function AttachmentTray({
         ))}
       </ul>
       {preview && (
-        <section className="essay-image-lightbox" role="dialog" aria-modal="true" aria-label={preview.fileName}>
-          <span className="essay-image-lightbox-close">
-            <IconButton
-              label="关闭图片预览"
-              tooltip="关闭"
-              icon={<X aria-hidden="true" />}
-              variant="secondary"
-              onClick={() => setPreview(undefined)}
+        <section
+          ref={lightboxRef}
+          className="essay-image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`图片预览：${preview.fileName}`}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePreview();
+          }}
+        >
+          <button className="essay-image-lightbox-close" type="button" title="关闭" aria-label="关闭图片预览" onClick={closePreview}>
+            <X aria-hidden="true" />
+          </button>
+
+          {attachments.length > 1 && (
+            <>
+              <button className="essay-image-lightbox-page previous" type="button" title="上一张" aria-label="上一张图片" onClick={() => changePreview(-1)}>
+                <ChevronLeft aria-hidden="true" />
+              </button>
+              <button className="essay-image-lightbox-page next" type="button" title="下一张" aria-label="下一张图片" onClick={() => changePreview(1)}>
+                <ChevronRight aria-hidden="true" />
+              </button>
+            </>
+          )}
+
+          <div
+            className={`essay-image-lightbox-stage ${scale > 1 ? 'is-zoomed' : ''} ${isDragging ? 'is-dragging' : ''}`}
+            onWheel={(event) => {
+              event.preventDefault();
+              changeScale(event.deltaY < 0 ? 0.25 : -0.25);
+            }}
+            onDoubleClick={() => {
+              if (scale === 1) setScale(2);
+              else resetTransform();
+            }}
+            onPointerDown={(event) => {
+              if (scale <= 1) return;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              dragRef.current = {pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: pan.x, originY: pan.y};
+              setIsDragging(true);
+            }}
+            onPointerMove={(event) => {
+              const drag = dragRef.current;
+              if (!drag || drag.pointerId !== event.pointerId) return;
+              setPan({x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY});
+            }}
+            onPointerUp={(event) => {
+              if (dragRef.current?.pointerId !== event.pointerId) return;
+              dragRef.current = undefined;
+              setIsDragging(false);
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            onPointerCancel={() => {
+              dragRef.current = undefined;
+              setIsDragging(false);
+            }}
+          >
+            <img
+              src={preview.previewDataUrl}
+              alt={preview.fileName}
+              draggable={false}
+              style={{transform: `translate3d(${pan.x}px, ${pan.y}px, 0) rotate(${rotation}deg) scale(${scale})`}}
             />
-          </span>
-          <img src={preview.previewDataUrl} alt={preview.fileName} />
+          </div>
+
+          <nav className="essay-image-lightbox-toolbar" aria-label="图片预览工具">
+            <button type="button" title="缩小" aria-label="缩小图片" disabled={scale <= 0.5} onClick={() => changeScale(-0.25)}>
+              <ZoomOut aria-hidden="true" />
+            </button>
+            <button type="button" title="放大" aria-label="放大图片" disabled={scale >= 4} onClick={() => changeScale(0.25)}>
+              <ZoomIn aria-hidden="true" />
+            </button>
+            <button type="button" title={isFullscreen ? '退出全屏' : '全屏'} aria-label={isFullscreen ? '退出全屏预览' : '全屏预览'} onClick={() => void toggleFullscreen()}>
+              {isFullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+            </button>
+            <button type="button" title="向左旋转" aria-label="图片向左旋转" onClick={() => rotate(-90)}>
+              <RotateCcw aria-hidden="true" />
+            </button>
+            <button type="button" title="向右旋转" aria-label="图片向右旋转" onClick={() => rotate(90)}>
+              <RotateCw aria-hidden="true" />
+            </button>
+          </nav>
         </section>
       )}
     </>

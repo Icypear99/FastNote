@@ -352,9 +352,10 @@
   -webkit-app-region: no-drag;
 }
 
-.global-search span {
-  font-size: var(--text-xs);
-  font-weight: 700;
+.global-search > svg {
+  flex: 0 0 auto;
+  height: 15px;
+  width: 15px;
 }
 
 .global-search input {

@@ -2,8 +2,15 @@ import {useEffect, useMemo, useRef, useState} from 'react';
 import {createPortal} from 'react-dom';
 import {differenceInCalendarDays} from 'date-fns';
 import {
+  ArrowDown,
+  ArrowDownUp,
+  ArrowUp,
+  Check,
+  ChevronDown,
   Hash,
   Inbox,
+  Maximize2,
+  Minimize2,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -11,6 +18,7 @@ import {
   Pin,
   RotateCcw,
   Save,
+  Search,
   Tags,
   Trash2,
   X,
@@ -42,6 +50,14 @@ const EMPTY_DRAFT: EssayDraft = {
 };
 
 type EssayFilter = 'all' | 'trash' | `tag:${string}`;
+type EssaySort = 'created-desc' | 'created-asc' | 'updated-desc' | 'updated-asc';
+
+const ESSAY_SORT_OPTIONS: Array<{value: EssaySort; label: string; detail: string}> = [
+  {value: 'created-desc', label: '创建时间', detail: '从新到旧'},
+  {value: 'created-asc', label: '创建时间', detail: '从旧到新'},
+  {value: 'updated-desc', label: '编辑时间', detail: '从新到旧'},
+  {value: 'updated-asc', label: '编辑时间', detail: '从旧到新'},
+];
 
 interface TagStat {
   key: string;
@@ -93,16 +109,25 @@ function formatEssayEditedAt(value: string) {
 
 export default function EssaysPage({
   essays,
+  searchQuery,
+  onSearchChange,
+  onClearSearch,
   run,
 }: {
   essays: Essay[];
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
+  onClearSearch: () => void;
   run: <T>(action: Promise<T>) => Promise<T>;
 }) {
   const feedback = useAppFeedback();
   const {drafts, updateDraft, removeDraft} = useEssayDrafts();
   const [filter, setFilter] = useState<EssayFilter>('all');
+  const [sortMode, setSortMode] = useState<EssaySort>('created-desc');
   const [isEssayRailCollapsed, setIsEssayRailCollapsed] = useState(false);
+  const [isComposerPageExpanded, setIsComposerPageExpanded] = useState(false);
   const [editingId, setEditingId] = useState<string>();
+  const [detachedEditorId, setDetachedEditorId] = useState<string>();
   const [isPublishing, setIsPublishing] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
   const [savingId, setSavingId] = useState<string>();
@@ -139,14 +164,21 @@ export default function EssaysPage({
 
   const visibleEssays = useMemo(() => {
     const source = filter === 'trash' ? archivedEssays : activeEssays;
-    const filtered = filter.startsWith('tag:')
+    const byTag = filter.startsWith('tag:')
       ? source.filter((essay) => essay.tags.some((tag) => tagKey(tag) === filter.slice(4)))
       : source;
+    const query = searchQuery.trim().toLocaleLowerCase('zh-CN');
+    const filtered = query
+      ? byTag.filter((essay) => [essay.title, essay.summary, essay.content, ...essay.tags].join('\n').toLocaleLowerCase('zh-CN').includes(query))
+      : byTag;
+    const [sortField, sortDirection] = sortMode.split('-') as ['created' | 'updated', 'asc' | 'desc'];
     return [...filtered].sort((left, right) => {
       if (filter !== 'trash' && left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1;
-      return Date.parse(right.createdAt) - Date.parse(left.createdAt);
+      const leftTime = Date.parse(sortField === 'created' ? left.createdAt : left.updatedAt);
+      const rightTime = Date.parse(sortField === 'created' ? right.createdAt : right.updatedAt);
+      return sortDirection === 'asc' ? leftTime - rightTime : rightTime - leftTime;
     });
-  }, [activeEssays, archivedEssays, filter]);
+  }, [activeEssays, archivedEssays, filter, searchQuery, sortMode]);
 
   const publishEssay = async () => {
     const draft = drafts[NEW_DRAFT_KEY] ?? EMPTY_DRAFT;
@@ -196,6 +228,7 @@ export default function EssaysPage({
       }));
       removeDraft(essay.id);
       setEditingId(undefined);
+      if (detachedEditorId === essay.id) setDetachedEditorId(undefined);
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -315,7 +348,16 @@ export default function EssaysPage({
   const selectedTag = filter.startsWith('tag:') ? tagStats.find((tag) => tag.key === filter.slice(4)) : undefined;
   const currentTitle = isTrash ? '回收站' : selectedTag ? `#${selectedTag.label}` : '全部随笔';
   const knownTags = tagStats.map((tag) => tag.label);
-  const focusComposer = () => document.querySelector<HTMLElement>('.essay-composer .ProseMirror')?.focus();
+  const detachedEssay = detachedEditorId ? activeEssays.find((essay) => essay.id === detachedEditorId) : undefined;
+  const detachedDraft = detachedEssay ? drafts[detachedEssay.id] ?? essayDraft(detachedEssay) : undefined;
+  const focusComposer = () => {
+    window.setTimeout(() => document.querySelector<HTMLElement>('.essay-composer .ProseMirror')?.focus(), 0);
+  };
+
+  const openDetachedEditor = (id: string) => {
+    setEditingId(undefined);
+    setDetachedEditorId(id);
+  };
 
   const importImages = async (key: string, draft: EssayDraft, files: File[]) => {
     const imported = await Promise.all(files.map((file) => commands.importEssayAttachment(file)));
@@ -341,23 +383,34 @@ export default function EssaysPage({
             onExpand={() => setIsEssayRailCollapsed(false)}
           />
         </aside>
-        <section className={`task-main essay-main ${isTrash ? 'trash-view' : ''} ${actionError ? 'has-feedback' : ''}`} aria-label="随笔内容">
-          <header className="task-module-header">
-            <section>
-              <span className="section-label">随笔</span>
-              <h2>{currentTitle}</h2>
+        <section className={`task-main essay-main ${isTrash ? 'trash-view' : ''} ${actionError ? 'has-feedback' : ''} ${isComposerPageExpanded ? 'composer-page-expanded' : ''}`} aria-label="随笔内容">
+          <header className="task-module-header essay-module-header">
+            <section className="essay-view-heading">
+              <EssayViewMenu title={currentTitle} sortMode={sortMode} onSortChange={setSortMode} />
             </section>
-            {isTrash && archivedEssays.length > 0 ? (
-              <button className="essay-empty-trash-btn" type="button" disabled={isEmptyingTrash} onClick={() => setIsEmptyTrashConfirmOpen(true)}>
-                <Trash2 aria-hidden="true" />
-                清空回收站
-              </button>
-            ) : !isTrash ? (
-              <button className="primary-btn task-add-record-btn" type="button" onClick={focusComposer}>
-                <PencilLine aria-hidden="true" />
-                写随笔
-              </button>
-            ) : null}
+            <div className="essay-header-tools">
+              <div className="essay-search-box" role="search">
+                <Search aria-hidden="true" />
+                <input
+                  data-essay-search
+                  value={searchQuery}
+                  aria-label="搜索随笔"
+                  placeholder="Ctrl+K"
+                  onChange={(event) => onSearchChange(event.currentTarget.value)}
+                />
+                {searchQuery && (
+                  <button type="button" title="清除搜索" aria-label="清除随笔搜索" onClick={onClearSearch}>
+                    <X aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              {isTrash && archivedEssays.length > 0 && (
+                <button className="essay-empty-trash-btn" type="button" disabled={isEmptyingTrash} onClick={() => setIsEmptyTrashConfirmOpen(true)}>
+                  <Trash2 aria-hidden="true" />
+                  清空回收站
+                </button>
+              )}
+            </div>
           </header>
           {actionError && (
             <VStack className="task-feedback-stack" gap={2} padding={3}>
@@ -371,29 +424,42 @@ export default function EssaysPage({
             </VStack>
           )}
           {!isTrash && (
-            <section className="essay-composer-band" aria-label="快速记录">
+            <section className={`essay-composer-band ${isComposerPageExpanded ? 'page-expanded' : ''}`} aria-label="快速记录">
               <VStack className="essay-content-column" gap={0}>
-                <EssayComposer
-                  key={composerSession}
-                  draft={newDraft}
-                  isPublishing={isPublishing}
-                  knownTags={knownTags}
-                  referenceEssays={activeEssays}
-                  onAddImages={(files) => importImages(NEW_DRAFT_KEY, newDraft, files)}
-                  onChange={(draft) => updateDraft(NEW_DRAFT_KEY, draft)}
-                  onError={setActionError}
-                  onPublish={publishEssay}
-                />
+                <div className="essay-composer-shell">
+                  <button
+                    className="essay-composer-expand"
+                    type="button"
+                    title={isComposerPageExpanded ? '还原编辑器' : '放大编辑器'}
+                    aria-label={isComposerPageExpanded ? '还原快速记录编辑器' : '在当前页面放大快速记录编辑器'}
+                    onClick={() => setIsComposerPageExpanded((value) => !value)}
+                  >
+                    {isComposerPageExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+                  </button>
+                  <EssayComposer
+                    key={composerSession}
+                    draft={newDraft}
+                    isPublishing={isPublishing}
+                    knownTags={knownTags}
+                    referenceEssays={activeEssays}
+                    onAddImages={(files) => importImages(NEW_DRAFT_KEY, newDraft, files)}
+                    onChange={(draft) => updateDraft(NEW_DRAFT_KEY, draft)}
+                    onError={setActionError}
+                    onPublish={publishEssay}
+                  />
+                </div>
               </VStack>
             </section>
           )}
-          <VStack className="essay-feed-scroll" gap={0}>
-            <VStack className="essay-content-column" gap={3}>
-              <EssayFeed
+          {!isComposerPageExpanded && (
+            <VStack className="essay-feed-scroll" gap={0}>
+              <VStack className="essay-content-column" gap={3}>
+                <EssayFeed
                 drafts={drafts}
                 editingId={editingId}
                 essays={visibleEssays}
                 filter={filter}
+                searchQuery={searchQuery}
                 permanentlyDeletingId={permanentlyDeletingId}
                 pinningId={pinningId}
                 restoringId={restoringId}
@@ -404,7 +470,9 @@ export default function EssaysPage({
                 onCancelEdit={cancelEditing}
                 onChangeDraft={updateDraft}
                 onClearFilter={() => setFilter('all')}
+                onClearSearch={onClearSearch}
                 onEdit={setEditingId}
+                onOpenDetached={openDetachedEditor}
                 onDeletePermanently={setPendingPermanentDelete}
                 onTogglePin={toggleEssayPin}
                 onRestore={restoreEssay}
@@ -413,9 +481,10 @@ export default function EssaysPage({
                 onError={setActionError}
                 onStartWriting={focusComposer}
                 onTagClick={(tag) => setFilter(`tag:${tagKey(tag)}`)}
-              />
+                />
+              </VStack>
             </VStack>
-          </VStack>
+          )}
         </section>
       </section>
       <AppConfirmDialog
@@ -454,6 +523,21 @@ export default function EssaysPage({
         isLoading={isEmptyingTrash}
         onAction={emptyEssayTrash}
       />
+      {detachedEditorId && detachedDraft && (
+        <DetachedEssayEditor
+          draft={detachedDraft}
+          essay={detachedEssay}
+          isSaving={savingId === detachedEditorId}
+          knownTags={knownTags}
+          referenceEssays={activeEssays.filter((essay) => essay.id !== detachedEditorId)}
+          onAddImages={(files) => importImages(detachedEditorId, detachedDraft, files)}
+          onChange={(draft) => updateDraft(detachedEditorId, {...draft, attachments: detachedDraft.attachments})}
+          onClose={() => setDetachedEditorId(undefined)}
+          onError={setActionError}
+          onRemoveAttachment={(id) => updateDraft(detachedEditorId, {...detachedDraft, attachments: detachedDraft.attachments.filter((attachment) => attachment.id !== id)})}
+          onSubmit={() => detachedEssay ? saveEssay(detachedEssay) : Promise.resolve()}
+        />
+      )}
     </>
   );
 }
@@ -547,6 +631,87 @@ function EssayFilters({
   );
 }
 
+function EssayViewMenu({
+  title,
+  sortMode,
+  onSortChange,
+}: {
+  title: string;
+  sortMode: EssaySort;
+  onSortChange: (sort: EssaySort) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const currentSort = ESSAY_SORT_OPTIONS.find((option) => option.value === sortMode) ?? ESSAY_SORT_OPTIONS[0];
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div ref={rootRef} className="essay-view-menu">
+      <h2>
+        <button
+          className="essay-view-menu-trigger"
+          type="button"
+          aria-label={`${title}，当前按${currentSort.label}${currentSort.detail}排序`}
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
+          onClick={() => setIsOpen((value) => !value)}
+        >
+          <span>{title}</span>
+          <ChevronDown aria-hidden="true" />
+        </button>
+      </h2>
+      {isOpen && (
+        <section className="essay-view-menu-card" aria-label="随笔排序菜单">
+          <header>
+            <ArrowDownUp aria-hidden="true" />
+            <span>
+              <strong>排序方式</strong>
+              <small>{currentSort.label}，{currentSort.detail}</small>
+            </span>
+          </header>
+          <div className="essay-sort-options" role="menu" aria-label="排序方式">
+            {ESSAY_SORT_OPTIONS.map((option) => (
+              <button
+                className={sortMode === option.value ? 'active' : ''}
+                type="button"
+                role="menuitemradio"
+                aria-checked={sortMode === option.value}
+                key={option.value}
+                onClick={() => {
+                  onSortChange(option.value);
+                  setIsOpen(false);
+                }}
+              >
+                {option.value.endsWith('desc') ? <ArrowDown aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+                <span>
+                  <strong>{option.label}</strong>
+                  <small>{option.detail}</small>
+                </span>
+                {sortMode === option.value && <Check className="essay-sort-check" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function EssayComposer({
   draft,
   isPublishing,
@@ -585,11 +750,93 @@ function EssayComposer({
   );
 }
 
+function DetachedEssayEditor({
+  draft,
+  essay,
+  isSaving,
+  knownTags,
+  referenceEssays,
+  onAddImages,
+  onChange,
+  onClose,
+  onError,
+  onRemoveAttachment,
+  onSubmit,
+}: {
+  draft: EssayDraft;
+  essay?: Essay;
+  isSaving: boolean;
+  knownTags: string[];
+  referenceEssays: Essay[];
+  onAddImages: (files: File[]) => Promise<void>;
+  onChange: (draft: EssayDraftInput) => void;
+  onClose: () => void;
+  onError: (message: string) => void;
+  onRemoveAttachment: (id: string) => void;
+  onSubmit: () => Promise<void>;
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <section
+      className="essay-detached-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={essay ? '独立编辑随笔' : '独立新建随笔'}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <article className="essay-detached-editor">
+        <header className="essay-detached-header">
+          <span>
+            <small>{essay ? '编辑随笔' : '新随笔'}</small>
+            <strong>{essay?.title || '记录此刻的想法'}</strong>
+          </span>
+          <button type="button" title="关闭" aria-label="关闭独立编辑器" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="essay-detached-body">
+          <RichTextEditor
+            value={draft}
+            knownTags={knownTags}
+            referenceEssays={referenceEssays}
+            attachments={draft.attachments}
+            isDisabled={isSaving}
+            isSubmitting={isSaving}
+            submitLabel={essay ? '保存随笔' : '发布随笔'}
+            placeholder="现在的想法是..."
+            onChange={(value) => onChange({...value, attachments: draft.attachments})}
+            onAddImages={onAddImages}
+            onRemoveAttachment={onRemoveAttachment}
+            onSubmit={onSubmit}
+            onError={onError}
+          />
+        </div>
+      </article>
+    </section>,
+    document.body,
+  );
+}
+
 function EssayFeed({
   drafts,
   editingId,
   essays,
   filter,
+  searchQuery,
   permanentlyDeletingId,
   pinningId,
   restoringId,
@@ -600,7 +847,9 @@ function EssayFeed({
   onCancelEdit,
   onChangeDraft,
   onClearFilter,
+  onClearSearch,
   onEdit,
+  onOpenDetached,
   onDeletePermanently,
   onTogglePin,
   onError,
@@ -614,6 +863,7 @@ function EssayFeed({
   editingId?: string;
   essays: Essay[];
   filter: EssayFilter;
+  searchQuery: string;
   permanentlyDeletingId?: string;
   pinningId?: string;
   restoringId?: string;
@@ -624,7 +874,9 @@ function EssayFeed({
   onCancelEdit: (essay: Essay) => void;
   onChangeDraft: (key: string, draft: EssayDraftInput) => void;
   onClearFilter: () => void;
+  onClearSearch: () => void;
   onEdit: (id: string) => void;
+  onOpenDetached: (id: string) => void;
   onDeletePermanently: (essay: Essay) => void;
   onTogglePin: (essay: Essay) => Promise<void>;
   onError: (message: string) => void;
@@ -637,14 +889,17 @@ function EssayFeed({
   if (!essays.length) {
     const isTrash = filter === 'trash';
     const isFiltered = filter.startsWith('tag:');
+    const isSearching = Boolean(searchQuery.trim());
     return (
       <EmptyState
         headingLevel={2}
         icon={isTrash ? <Trash2 /> : isFiltered ? <Tags /> : <Inbox />}
-        title={isTrash ? '回收站为空' : isFiltered ? '该标签下没有随笔' : '还没有随笔'}
-        description={isTrash ? '已删除的随笔会出现在这里，并且可以随时恢复。' : isFiltered ? '可以切换标签，或回到全部随笔。' : '从上方输入框记录第一个想法。'}
+        title={isSearching ? '没有匹配的随笔' : isTrash ? '回收站为空' : isFiltered ? '该标签下没有随笔' : '还没有随笔'}
+        description={isSearching ? `没有找到包含“${searchQuery.trim()}”的内容。` : isTrash ? '已删除的随笔会出现在这里，并且可以随时恢复。' : isFiltered ? '可以切换标签，或回到全部随笔。' : '从上方输入框记录第一个想法。'}
         actions={
-          isFiltered ? (
+          isSearching ? (
+            <Button label="清除搜索" variant="secondary" onClick={onClearSearch} />
+          ) : isFiltered ? (
             <Button label="查看全部随笔" variant="secondary" onClick={onClearFilter} />
           ) : !isTrash ? (
             <Button label="开始记录" variant="secondary" onClick={onStartWriting} />
@@ -723,6 +978,7 @@ function EssayFeed({
                       isDisabled={Boolean(savingId) || Boolean(pinningId)}
                       onArchive={onArchive}
                       onEdit={onEdit}
+                      onOpenDetached={onOpenDetached}
                       onTogglePin={onTogglePin}
                     />
                   )}
@@ -774,6 +1030,7 @@ function EssayActionsMenu({
       mode?: 'active';
       onArchive: (essay: Essay) => void;
       onEdit: (id: string) => void;
+      onOpenDetached: (id: string) => void;
       onTogglePin: (essay: Essay) => Promise<void>;
     }
 )) {
@@ -821,7 +1078,7 @@ function EssayActionsMenu({
       const triggerBounds = rootRef.current?.getBoundingClientRect();
       if (triggerBounds) {
         const menuWidth = 224;
-        const menuHeight = isTrashMenu ? 84 : 181;
+        const menuHeight = isTrashMenu ? 84 : 218;
         const viewportMargin = 12;
         const gap = 6;
         const viewportWidth = document.documentElement.clientWidth;
@@ -874,6 +1131,10 @@ function EssayActionsMenu({
                 <button type="button" role="menuitem" onClick={() => runAction(() => actions.onEdit(essay.id))}>
                   <PencilLine aria-hidden="true" />
                   编辑
+                </button>
+                <button type="button" role="menuitem" onClick={() => runAction(() => actions.onOpenDetached(essay.id))}>
+                  <Maximize2 aria-hidden="true" />
+                  独立编辑
                 </button>
                 <button type="button" role="menuitem" onClick={() => runAction(() => void actions.onTogglePin(essay))}>
                   <Pin aria-hidden="true" />

@@ -2,7 +2,6 @@ import {Node, type JSONContent} from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Highlight from '@tiptap/extension-highlight';
 import Placeholder from '@tiptap/extension-placeholder';
-import Underline from '@tiptap/extension-underline';
 import Suggestion, {type SuggestionProps} from '@tiptap/suggestion';
 import DOMPurify from 'dompurify';
 import {generateHTML} from '@tiptap/core';
@@ -193,7 +192,6 @@ export function editorExtensions(
       link: {openOnClick: false, autolink: true},
     }),
     Highlight.configure({multicolor: false}),
-    Underline,
     Placeholder.configure({placeholder}),
     createTagExtension(getTags, true, onTagSelected),
     MemoReference,
@@ -204,7 +202,6 @@ export function viewerExtensions() {
   return [
     StarterKit.configure({heading: {levels: [1, 2, 3]}}),
     Highlight.configure({multicolor: false}),
-    Underline,
     createTagExtension(() => [], false),
     MemoReference,
   ];

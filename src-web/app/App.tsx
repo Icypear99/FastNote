@@ -14,6 +14,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  Search,
   Settings,
   Wrench,
   X,
@@ -67,6 +68,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<'account' | 'system' | 'model' | 'shortcuts' | 'help'>('account');
   const [workspacePath, setWorkspacePath] = useState('');
+  const [globalSearch, setGlobalSearch] = useState('');
   const globalSearchRef = useRef<HTMLInputElement>(null);
   const profileMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const profileMenuRef = useRef<HTMLElement>(null);
@@ -129,7 +131,11 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (matchesShortcut(event, snapshot?.settings.globalSearchShortcut ?? 'Ctrl+K')) {
         event.preventDefault();
-        globalSearchRef.current?.focus();
+        if (activePanel === 'essays') {
+          document.querySelector<HTMLInputElement>('[data-essay-search]')?.focus();
+        } else {
+          globalSearchRef.current?.focus();
+        }
       }
       if (event.key === 'Escape') {
         setIsProfileMenuOpen(false);
@@ -137,7 +143,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [snapshot?.settings.globalSearchShortcut]);
+  }, [activePanel, snapshot?.settings.globalSearchShortcut]);
 
   useEffect(() => {
     if (!isProfileMenuOpen) return;
@@ -160,7 +166,15 @@ export default function App() {
     if (activePanel === 'dashboard') return <DashboardPage snapshot={snapshot} onNavigate={setActivePanel} />;
     if (activePanel === 'tasks') return <TasksPage projects={snapshot.projects} tasks={snapshot.tasks} run={run} />;
     if (activePanel === 'essays') {
-      return <EssaysPage essays={snapshot.essays} run={run} />;
+      return (
+        <EssaysPage
+          essays={snapshot.essays}
+          searchQuery={globalSearch}
+          onSearchChange={setGlobalSearch}
+          onClearSearch={() => setGlobalSearch('')}
+          run={run}
+        />
+      );
     }
     if (activePanel === 'tools') return <ToolsPage />;
     if (activePanel === 'assistant') {
@@ -174,7 +188,7 @@ export default function App() {
       );
     }
     return <DashboardPage snapshot={snapshot} onNavigate={setActivePanel} />;
-  }, [activePanel, run, setActivePanel, snapshot]);
+  }, [activePanel, globalSearch, run, setActivePanel, snapshot]);
 
   const updateTheme = async (themeMode: 'light' | 'dark') => {
     setThemePreview(themeMode);
@@ -299,10 +313,17 @@ export default function App() {
             <span className="topbar-kicker">FastNote</span>
             <h1 className="panel-window-title">{currentTitle}</h1>
           </div>
-          <label className="global-search" aria-label="全局搜索">
-            <span>搜索</span>
-            <input ref={globalSearchRef} placeholder="任务、项目、随笔" />
-          </label>
+          {activePanel !== 'essays' && (
+            <label className="global-search" aria-label="全局搜索">
+              <Search aria-hidden="true" />
+              <input
+                ref={globalSearchRef}
+                value={globalSearch}
+                placeholder="任务、项目、随笔"
+                onChange={(event) => setGlobalSearch(event.currentTarget.value)}
+              />
+            </label>
+          )}
           <div className="panel-window-drag-fill" data-tauri-drag-region />
           <TopbarClock />
           <div className="window-controls">
