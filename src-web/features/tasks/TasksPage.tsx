@@ -985,8 +985,10 @@ export default function TasksPage({
             setSelectedProjectId('trash');
           }}
         >
-          <Trash2 />
-          <span>回收站</span>
+          <span className="project-trash-label">
+            <Trash2 aria-hidden="true" />
+            <span>回收站</span>
+          </span>
           <small>{trashCount}</small>
         </button>
           </>

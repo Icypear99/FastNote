@@ -623,8 +623,10 @@ function EssayFilters({
         )}
       </nav>
       <button className={`project-filter project-trash-filter ${filter === 'trash' ? 'active' : ''}`} type="button" onClick={() => onChange('trash')}>
-        <Trash2 aria-hidden="true" />
-        <span>回收站</span>
+        <span className="project-trash-label">
+          <Trash2 aria-hidden="true" />
+          <span>回收站</span>
+        </span>
         <small>{archivedCount}</small>
       </button>
     </>

@@ -138,7 +138,6 @@
 }
 
 .task-workspace {
-  grid-template-columns: 230px minmax(0, 1fr);
   height: calc(100vh - var(--header-height) - 36px);
   min-height: 0;
 }
@@ -2275,12 +2274,8 @@
 /* Task workspace */
 .task-workspace {
   gap: 12px;
-  grid-template-columns: 212px minmax(0, 1fr);
-  transition: grid-template-columns 160ms ease;
-}
-
-.task-workspace.essay-workspace {
   grid-template-columns: 312px minmax(0, 1fr);
+  transition: grid-template-columns 160ms ease;
 }
 
 .task-workspace.project-rail-collapsed {
@@ -2534,10 +2529,11 @@
 }
 
 .project-trash-filter {
-  align-items: end;
+  align-items: center;
   border-top: 1px solid var(--separator);
   border-radius: 0;
   color: var(--text-secondary);
+  grid-template-columns: minmax(0, 1fr) auto;
   margin-top: var(--spacing-1);
   padding-bottom: var(--spacing-1);
   padding-top: var(--spacing-2);
@@ -2548,9 +2544,26 @@
   color: var(--danger);
 }
 
-.project-trash-filter > svg {
+.project-trash-label {
+  align-items: center;
+  display: inline-flex;
+  gap: 9px;
+  line-height: var(--spacing-4);
+  min-width: 0;
+}
+
+.project-trash-label > svg {
+  flex: 0 0 auto;
   height: var(--spacing-4);
   width: var(--spacing-4);
+}
+
+.project-trash-label > span {
+  line-height: var(--spacing-4);
+}
+
+.project-trash-filter > small {
+  line-height: var(--spacing-4);
 }
 
 .task-main {
@@ -4080,10 +4093,6 @@ button.task-data-row:hover {
 
 @media (max-width: 1100px) {
   .task-workspace {
-    grid-template-columns: 196px minmax(0, 1fr);
-  }
-
-  .task-workspace.essay-workspace {
     grid-template-columns: 296px minmax(0, 1fr);
   }
 
