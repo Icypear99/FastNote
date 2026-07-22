@@ -52,7 +52,7 @@ import {Token} from '@astryxdesign/core/Token';
 import {VStack} from '@astryxdesign/core/VStack';
 import type {Essay} from '../../shared/types';
 import {commands} from '../../core/services/commands';
-import {deriveEssayMetadata, normalizeTags, tagKey, tagMatchesPath} from '../../shared/utils/essay';
+import {deriveEssayMetadata, normalizeTag, normalizeTags, tagKey, tagMatchesPath} from '../../shared/utils/essay';
 import {useEssayDrafts} from './useEssayDrafts';
 import type {EssayDraft, EssayDraftInput} from './useEssayDrafts';
 import {AppConfirmDialog, useAppFeedback} from '../../shared/components/feedback';
@@ -62,6 +62,8 @@ import {
   EMPTY_TAG_PREFERENCES,
   parentTagKeys,
   readTagPreferences,
+  remapTagPreferences,
+  removeTagPreferences,
   ROOT_TAG_KEY,
   type TagNode,
   type TagPreferences,
@@ -130,6 +132,13 @@ function formatEssayEditedAt(value: string) {
   }).format(date);
 }
 
+function replaceTagBranch(value: string, sourceKey: string, targetLabel: string) {
+  const normalized = normalizeTag(value);
+  if (!tagMatchesPath(normalized, sourceKey)) return normalized;
+  const suffix = normalized.split('/').slice(sourceKey.split('/').length).join('/');
+  return suffix ? `${targetLabel}/${suffix}` : targetLabel;
+}
+
 export default function EssaysPage({
   essays,
   searchQuery,
@@ -151,7 +160,9 @@ export default function EssaysPage({
   const [isComposerPageExpanded, setIsComposerPageExpanded] = useState(false);
   const [tagPreferences, setTagPreferences] = useState(readTagPreferences);
   const [isTagSortOpen, setIsTagSortOpen] = useState(false);
-  const [editingTagIcon, setEditingTagIcon] = useState<TagNode>();
+  const [editingTag, setEditingTag] = useState<TagNode>();
+  const [pendingTagDelete, setPendingTagDelete] = useState<{tag: TagNode; withEssays: boolean}>();
+  const [isUpdatingTags, setIsUpdatingTags] = useState(false);
   const [editingId, setEditingId] = useState<string>();
   const [detachedEditorId, setDetachedEditorId] = useState<string>();
   const [isPublishing, setIsPublishing] = useState(false);
@@ -171,8 +182,8 @@ export default function EssaysPage({
   const activeEssays = useMemo(() => essays.filter((essay) => !essay.archivedAt), [essays]);
   const archivedEssays = useMemo(() => essays.filter((essay) => essay.archivedAt), [essays]);
   const tagTreeResult = useMemo(
-    () => buildTagTree(activeEssays, tagPreferences.orderByParent),
-    [activeEssays, tagPreferences.orderByParent],
+    () => buildTagTree(activeEssays, tagPreferences),
+    [activeEssays, tagPreferences.orderByParent, tagPreferences.pinnedKeys],
   );
   const tagStats = tagTreeResult.flatNodes;
   const knownTags = tagTreeResult.knownTags;
@@ -394,6 +405,83 @@ export default function EssaysPage({
     }));
   };
 
+  const toggleTagPin = (tag: TagNode) => {
+    setTagPreferences((current) => ({
+      ...current,
+      pinnedKeys: current.pinnedKeys.includes(tag.key)
+        ? current.pinnedKeys.filter((key) => key !== tag.key)
+        : [...current.pinnedKeys, tag.key],
+    }));
+    feedback.success(tagPreferences.pinnedKeys.includes(tag.key) ? '已取消标签置顶。' : '标签已置顶。', `tag-pin-${tag.key}`);
+  };
+
+  const saveTagEdits = async (tag: TagNode, nextLabelValue: string, icon: string) => {
+    const nextLabel = normalizeTag(nextLabelValue);
+    const nextKey = tagKey(nextLabel);
+    if (!nextLabel) throw new Error('标签名称不能为空。');
+    if (nextKey !== tag.key && nextKey.startsWith(`${tag.key}/`)) throw new Error('标签不能移动到自己的子级中。');
+    setIsUpdatingTags(true);
+    setActionError('');
+    try {
+      if (nextKey !== tag.key) {
+        const mutations = essays.flatMap((essay) => {
+          const nextTags = normalizeTags(essay.tags.map((value) => replaceTagBranch(value, tag.key, nextLabel)));
+          return sameTags(nextTags, essay.tags) ? [] : [commands.updateEssay({id: essay.id, tags: nextTags})];
+        });
+        if (mutations.length) await run(Promise.all(mutations));
+      }
+      setTagPreferences((current) => {
+        const remapped = nextKey === tag.key ? current : remapTagPreferences(current, tag.key, nextKey);
+        const icons = {...remapped.icons};
+        if (icon) icons[nextKey] = icon;
+        else delete icons[nextKey];
+        return {...remapped, icons};
+      });
+      if (filter.startsWith('tag:') && tagMatchesPath(filter.slice(4), tag.key)) {
+        const nextFilterKey = replaceTagBranch(filter.slice(4), tag.key, nextKey);
+        setFilter(`tag:${tagKey(nextFilterKey)}`);
+      }
+      feedback.success(nextKey === tag.key ? '标签图标已更新。' : '标签名称已更新。', `tag-edit-${tag.key}`);
+      setEditingTag(undefined);
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionError(message);
+      throw new Error(message);
+    } finally {
+      setIsUpdatingTags(false);
+    }
+  };
+
+  const deleteTag = async () => {
+    if (!pendingTagDelete || isUpdatingTags) return;
+    const {tag, withEssays} = pendingTagDelete;
+    setIsUpdatingTags(true);
+    setActionError('');
+    try {
+      if (withEssays) {
+        const relatedEssays = activeEssays.filter((essay) => essay.tags.some((value) => tagMatchesPath(value, tag.key)));
+        if (relatedEssays.length) await run(Promise.all(relatedEssays.map((essay) => commands.archiveEssay(essay.id))));
+        relatedEssays.forEach((essay) => removeDraft(essay.id));
+      } else {
+        const mutations = essays.flatMap((essay) => {
+          const nextTags = essay.tags.filter((value) => !tagMatchesPath(value, tag.key));
+          return nextTags.length === essay.tags.length ? [] : [commands.updateEssay({id: essay.id, tags: nextTags})];
+        });
+        if (mutations.length) await run(Promise.all(mutations));
+      }
+      setTagPreferences((current) => removeTagPreferences(current, tag.key));
+      if (filter.startsWith('tag:') && tagMatchesPath(filter.slice(4), tag.key)) setFilter('all');
+      feedback.success(withEssays ? '关联随笔已移入回收站。' : '标签已从随笔中移除。', `tag-delete-${tag.key}`);
+      setPendingTagDelete(undefined);
+    } catch (error) {
+      const message = errorMessage(error);
+      setActionError(message);
+      feedback.error(message, `tag-delete-error-${tag.key}`);
+    } finally {
+      setIsUpdatingTags(false);
+    }
+  };
+
   const importImages = async (key: string, draft: EssayDraft, files: File[]) => {
     const imported = await Promise.all(files.map((file) => commands.importEssayAttachment(file)));
     updateDraft(key, {
@@ -417,10 +505,12 @@ export default function EssaysPage({
             tagPreferences={tagPreferences}
             onChange={changeFilter}
             onCollapse={() => setIsEssayRailCollapsed(true)}
-            onEditIcon={setEditingTagIcon}
+            onEditTag={setEditingTag}
             onExpand={() => setIsEssayRailCollapsed(false)}
             onOpenSort={() => setIsTagSortOpen(true)}
             onPreferencesChange={setTagPreferences}
+            onRequestDelete={(tag, withEssays) => setPendingTagDelete({tag, withEssays})}
+            onTogglePin={toggleTagPin}
           />
         </aside>
         <section className={`task-main essay-main ${isTrash ? 'trash-view' : ''} ${actionError ? 'has-feedback' : ''} ${isComposerPageExpanded ? 'composer-page-expanded' : ''}`} aria-label="随笔内容">
@@ -563,6 +653,17 @@ export default function EssaysPage({
         isLoading={isEmptyingTrash}
         onAction={emptyEssayTrash}
       />
+      <AppConfirmDialog
+        isOpen={Boolean(pendingTagDelete)}
+        onOpenChange={(isOpen) => !isOpen && !isUpdatingTags && setPendingTagDelete(undefined)}
+        title={pendingTagDelete?.withEssays ? `删除“${pendingTagDelete.tag.label}”及关联随笔？` : `删除“${pendingTagDelete?.tag.label ?? ''}”标签？`}
+        description={pendingTagDelete?.withEssays
+          ? `该标签及其子标签下的 ${pendingTagDelete.tag.count} 篇随笔将移入回收站，之后可以恢复。`
+          : '该标签及其全部子标签会从随笔中移除，随笔内容仍会保留。'}
+        actionLabel={pendingTagDelete?.withEssays ? '删除标签和随笔' : '仅删除标签'}
+        isLoading={isUpdatingTags}
+        onAction={deleteTag}
+      />
       {detachedEditorId && detachedDraft && (
         <DetachedEssayEditor
           draft={detachedDraft}
@@ -589,20 +690,13 @@ export default function EssaysPage({
           }}
         />
       )}
-      {editingTagIcon && (
-        <TagIconDialog
-          icon={tagPreferences.icons[editingTagIcon.key] ?? ''}
-          label={editingTagIcon.label}
-          onClose={() => setEditingTagIcon(undefined)}
-          onSave={(icon) => {
-            setTagPreferences((current) => {
-              const icons = {...current.icons};
-              if (icon) icons[editingTagIcon.key] = icon;
-              else delete icons[editingTagIcon.key];
-              return {...current, icons};
-            });
-            setEditingTagIcon(undefined);
-          }}
+      {editingTag && (
+        <TagEditDialog
+          icon={tagPreferences.icons[editingTag.key] ?? ''}
+          tag={editingTag}
+          isSaving={isUpdatingTags}
+          onClose={() => !isUpdatingTags && setEditingTag(undefined)}
+          onSave={(label, icon) => saveTagEdits(editingTag, label, icon)}
         />
       )}
     </>
@@ -620,10 +714,12 @@ function EssayFilters({
   tagPreferences,
   onChange,
   onCollapse,
-  onEditIcon,
+  onEditTag,
   onExpand,
   onOpenSort,
   onPreferencesChange,
+  onRequestDelete,
+  onTogglePin,
 }: {
   activeCount: number;
   archivedCount: number;
@@ -635,14 +731,52 @@ function EssayFilters({
   tagPreferences: TagPreferences;
   onChange: (filter: EssayFilter) => void;
   onCollapse: () => void;
-  onEditIcon: (tag: TagNode) => void;
+  onEditTag: (tag: TagNode) => void;
   onExpand: () => void;
   onOpenSort: () => void;
   onPreferencesChange: Dispatch<SetStateAction<TagPreferences>>;
+  onRequestDelete: (tag: TagNode, withEssays: boolean) => void;
+  onTogglePin: (tag: TagNode) => void;
 }) {
+  const [openMenu, setOpenMenu] = useState<{tag: TagNode; left: number; top: number; trigger: HTMLButtonElement}>();
+  const [isDeleteMenuOpen, setIsDeleteMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLElement>(null);
   const selectedTag = filter.startsWith('tag:') ? tagStats.find((tag) => tag.key === filter.slice(4)) : undefined;
   const selectedLabel = filter === 'trash' ? '回收站' : selectedTag?.label ?? '全部随笔';
   const selectedCount = filter === 'trash' ? archivedCount : selectedTag?.count ?? activeCount;
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setOpenMenu(undefined);
+      setIsDeleteMenuOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [openMenu]);
+
+  const toggleMenu = (tag: TagNode, event: {currentTarget: HTMLButtonElement}) => {
+    if (openMenu?.tag.key === tag.key) {
+      setOpenMenu(undefined);
+      setIsDeleteMenuOpen(false);
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 228;
+    const menuHeight = 164;
+    const viewportMargin = 12;
+    const left = bounds.right + menuWidth + 8 <= window.innerWidth - viewportMargin
+      ? bounds.right + 8
+      : Math.max(viewportMargin, bounds.left - menuWidth - 8);
+    setIsDeleteMenuOpen(false);
+    setOpenMenu({
+      tag,
+      left,
+      top: Math.min(Math.max(viewportMargin, bounds.top - 8), window.innerHeight - menuHeight - viewportMargin),
+      trigger: event.currentTarget,
+    });
+  };
 
   if (isCollapsed) {
     return (
@@ -696,8 +830,10 @@ function EssayFilters({
             filter={filter}
             expandedKeys={tagPreferences.expandedKeys}
             icons={tagPreferences.icons}
+            openMenuKey={openMenu?.tag.key}
             onChange={onChange}
-            onEditIcon={onEditIcon}
+            onEditTag={onEditTag}
+            onOpenMenu={toggleMenu}
             onToggle={(key) => onPreferencesChange((current) => ({
               ...current,
               expandedKeys: current.expandedKeys.includes(key)
@@ -716,6 +852,89 @@ function EssayFilters({
         </span>
         <small>{archivedCount}</small>
       </button>
+      {openMenu && createPortal(
+        <>
+          <button
+            className="essay-tag-menu-dismiss"
+            type="button"
+            aria-label="关闭标签设置"
+            onClick={() => {
+              setOpenMenu(undefined);
+              setIsDeleteMenuOpen(false);
+            }}
+          />
+          <section
+            ref={menuRef}
+            className={`essay-tag-menu ${isDeleteMenuOpen ? 'delete-open' : ''}`}
+            style={{left: openMenu.left, top: openMenu.top}}
+            aria-label={`${openMenu.tag.label} 标签设置`}
+          >
+          <div role="menu" aria-label="标签操作">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onTogglePin(openMenu.tag);
+                setOpenMenu(undefined);
+              }}
+            >
+              <Pin aria-hidden="true" />
+              <span>{tagPreferences.pinnedKeys.includes(openMenu.tag.key) ? '取消置顶' : '置顶'}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onEditTag(openMenu.tag);
+                setOpenMenu(undefined);
+              }}
+            >
+              <PencilLine aria-hidden="true" />
+              <span>编辑名称/图标</span>
+            </button>
+          </div>
+          <div className="essay-tag-menu-danger" role="menu" aria-label="删除标签">
+            <button
+              className="danger"
+              type="button"
+              role="menuitem"
+              aria-expanded={isDeleteMenuOpen}
+              onClick={() => setIsDeleteMenuOpen((value) => !value)}
+            >
+              <Trash2 aria-hidden="true" />
+              <span>删除标签</span>
+              <ChevronRight aria-hidden="true" />
+            </button>
+            {isDeleteMenuOpen && (
+              <div className="essay-tag-delete-options">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onRequestDelete(openMenu.tag, false);
+                    setOpenMenu(undefined);
+                  }}
+                >
+                  仅删除标签
+                </button>
+                <button
+                  className="danger"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onRequestDelete(openMenu.tag, true);
+                    setOpenMenu(undefined);
+                  }}
+                >
+                  删除标签和随笔
+                </button>
+              </div>
+            )}
+          </div>
+          </section>
+        </>,
+        document.body,
+      )}
     </>
   );
 }
@@ -725,18 +944,22 @@ function EssayTagTree({
   filter,
   expandedKeys,
   icons,
+  openMenuKey,
   depth = 0,
   onChange,
-  onEditIcon,
+  onEditTag,
+  onOpenMenu,
   onToggle,
 }: {
   nodes: TagNode[];
   filter: EssayFilter;
   expandedKeys: string[];
   icons: Record<string, string>;
+  openMenuKey?: string;
   depth?: number;
   onChange: (filter: EssayFilter) => void;
-  onEditIcon: (tag: TagNode) => void;
+  onEditTag: (tag: TagNode) => void;
+  onOpenMenu: (tag: TagNode, event: {currentTarget: HTMLButtonElement}) => void;
   onToggle: (key: string) => void;
 }) {
   return nodes.map((tag) => {
@@ -745,7 +968,11 @@ function EssayTagTree({
     const style = {'--essay-tag-depth': depth} as CSSProperties;
     return (
       <div className="essay-tag-node" key={tag.key}>
-        <div className={`essay-tag-row ${filter === `tag:${tag.key}` ? 'active' : ''}`} style={style}>
+        <div
+          className={`essay-tag-row ${filter === `tag:${tag.key}` ? 'active' : ''}`}
+          data-menu-open={openMenuKey === tag.key}
+          style={style}
+        >
           {hasChildren ? (
             <button
               className="essay-tag-expand"
@@ -763,9 +990,9 @@ function EssayTagTree({
           <button
             className="essay-tag-icon-button"
             type="button"
-            title={`设置 ${tag.label} 的图标`}
-            aria-label={`设置 ${tag.label} 的图标`}
-            onClick={() => onEditIcon(tag)}
+            title={`编辑 ${tag.label}`}
+            aria-label={`编辑 ${tag.label} 的名称和图标`}
+            onClick={() => onEditTag(tag)}
           >
             {icons[tag.key] ? <span aria-hidden="true">{icons[tag.key]}</span> : <Hash aria-hidden="true" />}
           </button>
@@ -776,8 +1003,25 @@ function EssayTagTree({
             onClick={() => onChange(`tag:${tag.key}`)}
           >
             <span>{tag.name}</span>
-            <small>{tag.count}</small>
           </button>
+          <span className="essay-tag-row-right">
+            <small className="essay-tag-count">{tag.count}</small>
+            <button
+              className="essay-tag-more"
+              type="button"
+              title={`${tag.label} 设置`}
+              aria-label={`${tag.label} 标签设置`}
+              aria-expanded={openMenuKey === tag.key}
+              onClick={(event) => onOpenMenu(tag, event)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onOpenMenu(tag, event);
+              }}
+            >
+              <MoreHorizontal aria-hidden="true" />
+            </button>
+          </span>
         </div>
         {hasChildren && isExpanded && (
           <EssayTagTree
@@ -785,9 +1029,11 @@ function EssayTagTree({
             filter={filter}
             expandedKeys={expandedKeys}
             icons={icons}
+            openMenuKey={openMenuKey}
             depth={depth + 1}
             onChange={onChange}
-            onEditIcon={onEditIcon}
+            onEditTag={onEditTag}
+            onOpenMenu={onOpenMenu}
             onToggle={onToggle}
           />
         )}
@@ -947,18 +1193,22 @@ function SortableTagRow({node, depth}: {node: TagNode; depth: number}) {
 
 const TAG_ICON_OPTIONS = ['', '💡', '📚', '🎯', '💼', '🧠', '❤️', '⭐', '✅', '📌'];
 
-function TagIconDialog({
+function TagEditDialog({
   icon,
-  label,
+  tag,
+  isSaving,
   onClose,
   onSave,
 }: {
   icon: string;
-  label: string;
+  tag: TagNode;
+  isSaving: boolean;
   onClose: () => void;
-  onSave: (icon: string) => void;
+  onSave: (label: string, icon: string) => Promise<void>;
 }) {
   const [draftIcon, setDraftIcon] = useState(icon);
+  const [draftLabel, setDraftLabel] = useState(tag.label);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
@@ -966,24 +1216,45 @@ function TagIconDialog({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
+  const submit = async () => {
+    setError('');
+    try {
+      await onSave(draftLabel, draftIcon.trim());
+    } catch (submitError) {
+      setError(errorMessage(submitError));
+    }
+  };
+
   return createPortal(
     <section
       className="essay-tag-dialog-backdrop compact"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="essay-tag-icon-title"
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+      aria-labelledby="essay-tag-edit-title"
+      onMouseDown={(event) => event.target === event.currentTarget && !isSaving && onClose()}
     >
-      <article className="essay-tag-dialog essay-tag-icon-dialog">
+      <article className="essay-tag-dialog essay-tag-edit-dialog">
         <header>
           <span>
-            <small>标签图标</small>
-            <h2 id="essay-tag-icon-title">{label}</h2>
+            <small>标签设置</small>
+            <h2 id="essay-tag-edit-title">编辑名称/图标</h2>
           </span>
-          <button type="button" className="essay-tag-dialog-close" title="关闭" aria-label="关闭标签图标设置" onClick={onClose}>
+          <button type="button" className="essay-tag-dialog-close" title="关闭" aria-label="关闭标签设置" disabled={isSaving} onClick={onClose}>
             <X aria-hidden="true" />
           </button>
         </header>
+        <label className="essay-tag-name-field">
+          <span>标签名称</span>
+          <input
+            autoFocus
+            value={draftLabel}
+            aria-label="标签名称"
+            placeholder="例如：领域/技能"
+            disabled={isSaving}
+            onChange={(event) => setDraftLabel(event.currentTarget.value)}
+          />
+          <small>使用“标签/子标签”格式调整层级</small>
+        </label>
         <div className="essay-tag-icon-options" role="group" aria-label="选择标签图标">
           {TAG_ICON_OPTIONS.map((option) => (
             <button
@@ -992,6 +1263,7 @@ function TagIconDialog({
               title={option || '默认井号'}
               aria-label={option || '默认井号'}
               key={option || 'default'}
+              disabled={isSaving}
               onClick={() => setDraftIcon(option)}
             >
               {option || <Hash aria-hidden="true" />}
@@ -1004,14 +1276,16 @@ function TagIconDialog({
             value={draftIcon}
             aria-label="自定义标签图标"
             placeholder="输入 emoji"
+            disabled={isSaving}
             onChange={(event) => setDraftIcon(Array.from(event.currentTarget.value).slice(0, 2).join(''))}
           />
         </label>
+        {error && <p className="essay-tag-edit-error" role="alert">{error}</p>}
         <footer>
-          <button type="button" className="secondary-btn" onClick={onClose}>取消</button>
-          <button type="button" className="primary-btn" onClick={() => onSave(draftIcon.trim())}>
+          <button type="button" className="secondary-btn" disabled={isSaving} onClick={onClose}>取消</button>
+          <button type="button" className="primary-btn" disabled={isSaving || !normalizeTag(draftLabel)} onClick={() => void submit()}>
             <Save aria-hidden="true" />
-            保存
+            {isSaving ? '保存中...' : '保存'}
           </button>
         </footer>
       </article>

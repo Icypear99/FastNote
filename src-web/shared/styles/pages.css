@@ -593,7 +593,7 @@
   align-items: center;
   border-radius: 6px;
   display: grid;
-  grid-template-columns: 22px 26px minmax(0, 1fr);
+  grid-template-columns: 22px 26px minmax(0, 1fr) 28px;
   min-height: 34px;
   padding-left: calc(var(--essay-tag-depth) * 14px);
 }
@@ -654,8 +654,7 @@
 
 .essay-tag-filter.project-filter {
   background: transparent;
-  gap: 7px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: block;
   min-height: 34px;
   min-width: 0;
   padding: 0 8px 0 3px;
@@ -672,6 +671,153 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.essay-tag-row-right {
+  display: grid;
+  height: 28px;
+  place-items: center;
+  width: 28px;
+}
+
+.essay-tag-count,
+.essay-tag-more {
+  grid-area: 1 / 1;
+  transition: opacity 120ms ease;
+}
+
+.essay-tag-count {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  opacity: 1;
+}
+
+.essay-tag-more {
+  align-items: center;
+  background: var(--control-hover-bg);
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  height: 26px;
+  justify-content: center;
+  opacity: 0;
+  padding: 0;
+  width: 26px;
+}
+
+.essay-tag-row:hover .essay-tag-count,
+.essay-tag-row:focus-within .essay-tag-count,
+.essay-tag-row[data-menu-open='true'] .essay-tag-count {
+  opacity: 0;
+}
+
+.essay-tag-row:hover .essay-tag-more,
+.essay-tag-row:focus-within .essay-tag-more,
+.essay-tag-row[data-menu-open='true'] .essay-tag-more {
+  opacity: 1;
+}
+
+.essay-tag-more:hover,
+.essay-tag-row[data-menu-open='true'] .essay-tag-more {
+  color: var(--text-primary);
+}
+
+.essay-tag-more svg {
+  height: 16px;
+  width: 16px;
+}
+
+.essay-tag-menu {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  position: fixed;
+  width: 228px;
+  z-index: calc(var(--z-index-modal, 1100) - 1);
+}
+
+.essay-tag-menu-dismiss {
+  background: transparent;
+  border: 0;
+  cursor: default;
+  inset: 0;
+  padding: 0;
+  position: fixed;
+  z-index: calc(var(--z-index-modal, 1100) - 2);
+}
+
+.essay-tag-menu > div {
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+}
+
+.essay-tag-menu-danger {
+  border-top: 1px solid var(--separator);
+}
+
+.essay-tag-menu button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: grid;
+  font-size: var(--text-sm);
+  gap: 9px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  min-height: 38px;
+  padding: 0 9px;
+  text-align: left;
+  width: 100%;
+}
+
+.essay-tag-menu button:hover {
+  background: var(--control-hover-bg);
+}
+
+.essay-tag-menu button > svg {
+  color: var(--text-secondary);
+  height: 15px;
+  width: 15px;
+}
+
+.essay-tag-menu button > svg:last-child:not(:first-child) {
+  height: 14px;
+  width: 14px;
+}
+
+.essay-tag-menu button.danger,
+.essay-tag-menu button.danger > svg {
+  color: var(--danger);
+}
+
+.essay-tag-menu button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.essay-tag-delete-options {
+  background: var(--input-bg);
+  border-radius: 6px;
+  display: grid;
+  gap: 2px;
+  margin-top: 2px;
+  padding: 4px;
+}
+
+.essay-tag-delete-options button {
+  display: block;
+  font-size: var(--text-xs);
+  min-height: 34px;
+  padding: 0 10px;
 }
 
 .essay-tag-dialog-backdrop {
@@ -883,8 +1029,29 @@
   width: 14px;
 }
 
-.essay-tag-icon-dialog {
+.essay-tag-edit-dialog {
   width: min(420px, calc(100vw - 48px));
+}
+
+.essay-tag-name-field {
+  display: grid;
+  gap: 7px;
+  padding: 18px 24px 0;
+}
+
+.essay-tag-name-field > span,
+.essay-tag-custom-icon > span {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.essay-tag-name-field input {
+  min-height: 38px;
+}
+
+.essay-tag-name-field small {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 
 .essay-tag-icon-options {
@@ -929,13 +1096,20 @@
   padding: 0 24px 20px;
 }
 
-.essay-tag-custom-icon > span {
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-}
-
 .essay-tag-custom-icon input {
   min-height: 36px;
+}
+
+.essay-tag-edit-error {
+  color: var(--danger);
+  font-size: var(--text-xs);
+  margin: -8px 24px 16px;
+}
+
+.essay-tag-dialog button:disabled,
+.essay-tag-dialog input:disabled {
+  cursor: wait;
+  opacity: 0.56;
 }
 
 .essay-rail-capsule.trash > span {

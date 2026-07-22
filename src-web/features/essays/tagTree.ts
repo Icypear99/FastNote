@@ -8,6 +8,7 @@ export interface TagPreferences {
   expandedKeys: string[];
   icons: Record<string, string>;
   orderByParent: Record<string, string[]>;
+  pinnedKeys: string[];
 }
 
 export interface TagNode {
@@ -29,6 +30,7 @@ export const EMPTY_TAG_PREFERENCES: TagPreferences = {
   expandedKeys: [],
   icons: {},
   orderByParent: {},
+  pinnedKeys: [],
 };
 
 export function readTagPreferences(): TagPreferences {
@@ -38,6 +40,7 @@ export function readTagPreferences(): TagPreferences {
       expandedKeys: Array.isArray(value.expandedKeys) ? value.expandedKeys.filter((key): key is string => typeof key === 'string') : [],
       icons: value.icons && typeof value.icons === 'object' ? value.icons : {},
       orderByParent: value.orderByParent && typeof value.orderByParent === 'object' ? value.orderByParent : {},
+      pinnedKeys: Array.isArray(value.pinnedKeys) ? value.pinnedKeys.filter((key): key is string => typeof key === 'string') : [],
     };
   } catch {
     return EMPTY_TAG_PREFERENCES;
@@ -52,7 +55,10 @@ export function writeTagPreferences(preferences: TagPreferences) {
   }
 }
 
-function compareTagNodes(left: TagNode, right: TagNode, order: string[]) {
+function compareTagNodes(left: TagNode, right: TagNode, order: string[], pinnedKeys: string[]) {
+  const leftPinned = pinnedKeys.includes(left.key);
+  const rightPinned = pinnedKeys.includes(right.key);
+  if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
   const leftIndex = order.indexOf(left.key);
   const rightIndex = order.indexOf(right.key);
   if (leftIndex >= 0 || rightIndex >= 0) {
@@ -63,7 +69,7 @@ function compareTagNodes(left: TagNode, right: TagNode, order: string[]) {
   return left.name.localeCompare(right.name, 'zh-CN');
 }
 
-export function buildTagTree(essays: Essay[], orderByParent: Record<string, string[]>): TagTreeResult {
+export function buildTagTree(essays: Essay[], preferences: Pick<TagPreferences, 'orderByParent' | 'pinnedKeys'>): TagTreeResult {
   const nodesByKey = new Map<string, TagNode>();
   const essayIdsByKey = new Map<string, Set<string>>();
   const knownTags = new Map<string, string>();
@@ -101,8 +107,8 @@ export function buildTagTree(essays: Essay[], orderByParent: Record<string, stri
   });
 
   const sortBranch = (nodes: TagNode[], parentKey: string) => {
-    const order = orderByParent[parentKey] ?? [];
-    nodes.sort((left, right) => compareTagNodes(left, right, order));
+    const order = preferences.orderByParent[parentKey] ?? [];
+    nodes.sort((left, right) => compareTagNodes(left, right, order, preferences.pinnedKeys));
     nodes.forEach((node) => sortBranch(node.children, node.key));
   };
   const roots = [...nodesByKey.values()].filter((node) => node.parentKey === ROOT_TAG_KEY);
@@ -125,4 +131,44 @@ export function buildTagTree(essays: Essay[], orderByParent: Record<string, stri
 export function parentTagKeys(key: string) {
   const segments = key.split('/');
   return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join('/'));
+}
+
+function mapBranchKey(key: string, sourceKey: string, targetKey: string) {
+  if (key === sourceKey) return targetKey;
+  return key.startsWith(`${sourceKey}/`) ? `${targetKey}${key.slice(sourceKey.length)}` : key;
+}
+
+export function remapTagPreferences(preferences: TagPreferences, sourceKey: string, targetKey: string): TagPreferences {
+  const icons: Record<string, string> = {};
+  Object.entries(preferences.icons).forEach(([key, icon]) => {
+    icons[mapBranchKey(key, sourceKey, targetKey)] = icon;
+  });
+  const orderByParent: Record<string, string[]> = {};
+  Object.entries(preferences.orderByParent).forEach(([parentKey, order]) => {
+    orderByParent[mapBranchKey(parentKey, sourceKey, targetKey)] = [
+      ...new Set(order.map((key) => mapBranchKey(key, sourceKey, targetKey))),
+    ];
+  });
+  return {
+    expandedKeys: [...new Set(preferences.expandedKeys.map((key) => mapBranchKey(key, sourceKey, targetKey)))],
+    icons,
+    orderByParent,
+    pinnedKeys: [...new Set(preferences.pinnedKeys.map((key) => mapBranchKey(key, sourceKey, targetKey)))],
+  };
+}
+
+export function removeTagPreferences(preferences: TagPreferences, branchKey: string): TagPreferences {
+  const belongsToBranch = (key: string) => key === branchKey || key.startsWith(`${branchKey}/`);
+  const icons = Object.fromEntries(Object.entries(preferences.icons).filter(([key]) => !belongsToBranch(key)));
+  const orderByParent = Object.fromEntries(
+    Object.entries(preferences.orderByParent)
+      .filter(([key]) => !belongsToBranch(key))
+      .map(([key, order]) => [key, order.filter((item) => !belongsToBranch(item))]),
+  );
+  return {
+    expandedKeys: preferences.expandedKeys.filter((key) => !belongsToBranch(key)),
+    icons,
+    orderByParent,
+    pinnedKeys: preferences.pinnedKeys.filter((key) => !belongsToBranch(key)),
+  };
 }
