@@ -1,5 +1,22 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
+import type {CSSProperties, Dispatch, SetStateAction} from 'react';
 import {createPortal} from 'react-dom';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import type {DragEndEvent} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {CSS as DndCss} from '@dnd-kit/utilities';
 import {differenceInCalendarDays} from 'date-fns';
 import {
   ArrowDown,
@@ -7,6 +24,8 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronRight,
+  GripVertical,
   Hash,
   Inbox,
   Maximize2,
@@ -33,11 +52,21 @@ import {Token} from '@astryxdesign/core/Token';
 import {VStack} from '@astryxdesign/core/VStack';
 import type {Essay} from '../../shared/types';
 import {commands} from '../../core/services/commands';
-import {deriveEssayMetadata, normalizeTags, tagKey} from '../../shared/utils/essay';
+import {deriveEssayMetadata, normalizeTags, tagKey, tagMatchesPath} from '../../shared/utils/essay';
 import {useEssayDrafts} from './useEssayDrafts';
 import type {EssayDraft, EssayDraftInput} from './useEssayDrafts';
 import {AppConfirmDialog, useAppFeedback} from '../../shared/components/feedback';
 import {AttachmentTray, RichTextEditor, RichTextViewer} from './editor/RichTextEditor';
+import {
+  buildTagTree,
+  EMPTY_TAG_PREFERENCES,
+  parentTagKeys,
+  readTagPreferences,
+  ROOT_TAG_KEY,
+  type TagNode,
+  type TagPreferences,
+  writeTagPreferences,
+} from './tagTree';
 
 const NEW_DRAFT_KEY = 'new';
 const EMPTY_DRAFT: EssayDraft = {
@@ -58,12 +87,6 @@ const ESSAY_SORT_OPTIONS: Array<{value: EssaySort; label: string; detail: string
   {value: 'updated-desc', label: '编辑时间', detail: '从新到旧'},
   {value: 'updated-asc', label: '编辑时间', detail: '从旧到新'},
 ];
-
-interface TagStat {
-  key: string;
-  label: string;
-  count: number;
-}
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -126,6 +149,9 @@ export default function EssaysPage({
   const [sortMode, setSortMode] = useState<EssaySort>('created-desc');
   const [isEssayRailCollapsed, setIsEssayRailCollapsed] = useState(false);
   const [isComposerPageExpanded, setIsComposerPageExpanded] = useState(false);
+  const [tagPreferences, setTagPreferences] = useState(readTagPreferences);
+  const [isTagSortOpen, setIsTagSortOpen] = useState(false);
+  const [editingTagIcon, setEditingTagIcon] = useState<TagNode>();
   const [editingId, setEditingId] = useState<string>();
   const [detachedEditorId, setDetachedEditorId] = useState<string>();
   const [isPublishing, setIsPublishing] = useState(false);
@@ -144,17 +170,16 @@ export default function EssaysPage({
 
   const activeEssays = useMemo(() => essays.filter((essay) => !essay.archivedAt), [essays]);
   const archivedEssays = useMemo(() => essays.filter((essay) => essay.archivedAt), [essays]);
-  const tagStats = useMemo<TagStat[]>(() => {
-    const stats = new Map<string, TagStat>();
-    activeEssays.forEach((essay) => {
-      const uniqueTags = new Map(normalizeTags(essay.tags).map((tag) => [tagKey(tag), tag]));
-      uniqueTags.forEach((label, key) => {
-        const current = stats.get(key);
-        stats.set(key, current ? {...current, count: current.count + 1} : {key, label, count: 1});
-      });
-    });
-    return [...stats.values()].sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'zh-CN'));
-  }, [activeEssays]);
+  const tagTreeResult = useMemo(
+    () => buildTagTree(activeEssays, tagPreferences.orderByParent),
+    [activeEssays, tagPreferences.orderByParent],
+  );
+  const tagStats = tagTreeResult.flatNodes;
+  const knownTags = tagTreeResult.knownTags;
+
+  useEffect(() => {
+    writeTagPreferences(tagPreferences);
+  }, [tagPreferences]);
 
   const recordDays = useMemo(() => {
     const timestamps = activeEssays.map((essay) => Date.parse(essay.createdAt)).filter(Number.isFinite);
@@ -165,7 +190,7 @@ export default function EssaysPage({
   const visibleEssays = useMemo(() => {
     const source = filter === 'trash' ? archivedEssays : activeEssays;
     const byTag = filter.startsWith('tag:')
-      ? source.filter((essay) => essay.tags.some((tag) => tagKey(tag) === filter.slice(4)))
+      ? source.filter((essay) => essay.tags.some((tag) => tagMatchesPath(tag, filter.slice(4))))
       : source;
     const query = searchQuery.trim().toLocaleLowerCase('zh-CN');
     const filtered = query
@@ -346,8 +371,7 @@ export default function EssaysPage({
   const newDraft = drafts[NEW_DRAFT_KEY] ?? EMPTY_DRAFT;
   const isTrash = filter === 'trash';
   const selectedTag = filter.startsWith('tag:') ? tagStats.find((tag) => tag.key === filter.slice(4)) : undefined;
-  const currentTitle = isTrash ? '回收站' : selectedTag ? `#${selectedTag.label}` : '全部随笔';
-  const knownTags = tagStats.map((tag) => tag.label);
+  const currentTitle = isTrash ? '回收站' : selectedTag ? selectedTag.label.split('/').map((part) => `#${part}`).join(' / ') : '全部随笔';
   const detachedEssay = detachedEditorId ? activeEssays.find((essay) => essay.id === detachedEditorId) : undefined;
   const detachedDraft = detachedEssay ? drafts[detachedEssay.id] ?? essayDraft(detachedEssay) : undefined;
   const focusComposer = () => {
@@ -357,6 +381,17 @@ export default function EssaysPage({
   const openDetachedEditor = (id: string) => {
     setEditingId(undefined);
     setDetachedEditorId(id);
+  };
+
+  const changeFilter = (nextFilter: EssayFilter) => {
+    setFilter(nextFilter);
+    if (!nextFilter.startsWith('tag:')) return;
+    const nextParents = parentTagKeys(nextFilter.slice(4));
+    if (!nextParents.length) return;
+    setTagPreferences((current) => ({
+      ...current,
+      expandedKeys: [...new Set([...current.expandedKeys, ...nextParents])],
+    }));
   };
 
   const importImages = async (key: string, draft: EssayDraft, files: File[]) => {
@@ -377,10 +412,15 @@ export default function EssaysPage({
             filter={filter}
             isCollapsed={isEssayRailCollapsed}
             recordDays={recordDays}
+            tagTree={tagTreeResult.nodes}
             tagStats={tagStats}
-            onChange={setFilter}
+            tagPreferences={tagPreferences}
+            onChange={changeFilter}
             onCollapse={() => setIsEssayRailCollapsed(true)}
+            onEditIcon={setEditingTagIcon}
             onExpand={() => setIsEssayRailCollapsed(false)}
+            onOpenSort={() => setIsTagSortOpen(true)}
+            onPreferencesChange={setTagPreferences}
           />
         </aside>
         <section className={`task-main essay-main ${isTrash ? 'trash-view' : ''} ${actionError ? 'has-feedback' : ''} ${isComposerPageExpanded ? 'composer-page-expanded' : ''}`} aria-label="随笔内容">
@@ -469,7 +509,7 @@ export default function EssaysPage({
                 onArchive={setPendingArchive}
                 onCancelEdit={cancelEditing}
                 onChangeDraft={updateDraft}
-                onClearFilter={() => setFilter('all')}
+                onClearFilter={() => changeFilter('all')}
                 onClearSearch={onClearSearch}
                 onEdit={setEditingId}
                 onOpenDetached={openDetachedEditor}
@@ -480,7 +520,7 @@ export default function EssaysPage({
                 onImportImages={importImages}
                 onError={setActionError}
                 onStartWriting={focusComposer}
-                onTagClick={(tag) => setFilter(`tag:${tagKey(tag)}`)}
+                onTagClick={(tag) => changeFilter(`tag:${tagKey(tag)}`)}
                 />
               </VStack>
             </VStack>
@@ -538,6 +578,33 @@ export default function EssaysPage({
           onSubmit={() => detachedEssay ? saveEssay(detachedEssay) : Promise.resolve()}
         />
       )}
+      {isTagSortOpen && (
+        <TagSortDialog
+          nodes={tagTreeResult.nodes}
+          orderByParent={tagPreferences.orderByParent}
+          onClose={() => setIsTagSortOpen(false)}
+          onSave={(orderByParent) => {
+            setTagPreferences((current) => ({...current, orderByParent}));
+            setIsTagSortOpen(false);
+          }}
+        />
+      )}
+      {editingTagIcon && (
+        <TagIconDialog
+          icon={tagPreferences.icons[editingTagIcon.key] ?? ''}
+          label={editingTagIcon.label}
+          onClose={() => setEditingTagIcon(undefined)}
+          onSave={(icon) => {
+            setTagPreferences((current) => {
+              const icons = {...current.icons};
+              if (icon) icons[editingTagIcon.key] = icon;
+              else delete icons[editingTagIcon.key];
+              return {...current, icons};
+            });
+            setEditingTagIcon(undefined);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -548,20 +615,30 @@ function EssayFilters({
   filter,
   isCollapsed,
   recordDays,
+  tagTree,
   tagStats,
+  tagPreferences,
   onChange,
   onCollapse,
+  onEditIcon,
   onExpand,
+  onOpenSort,
+  onPreferencesChange,
 }: {
   activeCount: number;
   archivedCount: number;
   filter: EssayFilter;
   isCollapsed: boolean;
   recordDays: number;
-  tagStats: TagStat[];
+  tagTree: TagNode[];
+  tagStats: TagNode[];
+  tagPreferences: TagPreferences;
   onChange: (filter: EssayFilter) => void;
   onCollapse: () => void;
+  onEditIcon: (tag: TagNode) => void;
   onExpand: () => void;
+  onOpenSort: () => void;
+  onPreferencesChange: Dispatch<SetStateAction<TagPreferences>>;
 }) {
   const selectedTag = filter.startsWith('tag:') ? tagStats.find((tag) => tag.key === filter.slice(4)) : undefined;
   const selectedLabel = filter === 'trash' ? '回收站' : selectedTag?.label ?? '全部随笔';
@@ -604,20 +681,30 @@ function EssayFilters({
         <span>记录 {recordDays} 天</span>
       </p>
       <nav className="project-filter-list essay-filter-list" aria-label="随笔标签">
-        <span className="essay-filter-heading">全部标签</span>
-        {tagStats.length ? (
-          tagStats.map((tag) => (
-            <button
-              className={`project-filter ${filter === `tag:${tag.key}` ? 'active' : ''}`}
-              type="button"
-              key={tag.key}
-              onClick={() => onChange(`tag:${tag.key}`)}
-            >
-              <span className="essay-filter-icon"><Hash aria-hidden="true" /></span>
-              <span>{tag.label}</span>
-              <small>{tag.count}</small>
+        <header className="essay-filter-heading">
+          <span>全部标签</span>
+          {tagStats.length > 1 && (
+            <button type="button" title="调整标签顺序" onClick={onOpenSort}>
+              <ArrowDownUp aria-hidden="true" />
+              <span>排序</span>
             </button>
-          ))
+          )}
+        </header>
+        {tagTree.length ? (
+          <EssayTagTree
+            nodes={tagTree}
+            filter={filter}
+            expandedKeys={tagPreferences.expandedKeys}
+            icons={tagPreferences.icons}
+            onChange={onChange}
+            onEditIcon={onEditIcon}
+            onToggle={(key) => onPreferencesChange((current) => ({
+              ...current,
+              expandedKeys: current.expandedKeys.includes(key)
+                ? current.expandedKeys.filter((item) => item !== key)
+                : [...current.expandedKeys, key],
+            }))}
+          />
         ) : (
           <span className="essay-filter-empty">还没有标签</span>
         )}
@@ -630,6 +717,306 @@ function EssayFilters({
         <small>{archivedCount}</small>
       </button>
     </>
+  );
+}
+
+function EssayTagTree({
+  nodes,
+  filter,
+  expandedKeys,
+  icons,
+  depth = 0,
+  onChange,
+  onEditIcon,
+  onToggle,
+}: {
+  nodes: TagNode[];
+  filter: EssayFilter;
+  expandedKeys: string[];
+  icons: Record<string, string>;
+  depth?: number;
+  onChange: (filter: EssayFilter) => void;
+  onEditIcon: (tag: TagNode) => void;
+  onToggle: (key: string) => void;
+}) {
+  return nodes.map((tag) => {
+    const isExpanded = expandedKeys.includes(tag.key);
+    const hasChildren = tag.children.length > 0;
+    const style = {'--essay-tag-depth': depth} as CSSProperties;
+    return (
+      <div className="essay-tag-node" key={tag.key}>
+        <div className={`essay-tag-row ${filter === `tag:${tag.key}` ? 'active' : ''}`} style={style}>
+          {hasChildren ? (
+            <button
+              className="essay-tag-expand"
+              type="button"
+              title={isExpanded ? '收起子标签' : '展开子标签'}
+              aria-label={`${isExpanded ? '收起' : '展开'} ${tag.label}`}
+              aria-expanded={isExpanded}
+              onClick={() => onToggle(tag.key)}
+            >
+              <ChevronRight aria-hidden="true" />
+            </button>
+          ) : (
+            <span className="essay-tag-expand-placeholder" aria-hidden="true" />
+          )}
+          <button
+            className="essay-tag-icon-button"
+            type="button"
+            title={`设置 ${tag.label} 的图标`}
+            aria-label={`设置 ${tag.label} 的图标`}
+            onClick={() => onEditIcon(tag)}
+          >
+            {icons[tag.key] ? <span aria-hidden="true">{icons[tag.key]}</span> : <Hash aria-hidden="true" />}
+          </button>
+          <button
+            className="project-filter essay-tag-filter"
+            type="button"
+            title={tag.label}
+            onClick={() => onChange(`tag:${tag.key}`)}
+          >
+            <span>{tag.name}</span>
+            <small>{tag.count}</small>
+          </button>
+        </div>
+        {hasChildren && isExpanded && (
+          <EssayTagTree
+            nodes={tag.children}
+            filter={filter}
+            expandedKeys={expandedKeys}
+            icons={icons}
+            depth={depth + 1}
+            onChange={onChange}
+            onEditIcon={onEditIcon}
+            onToggle={onToggle}
+          />
+        )}
+      </div>
+    );
+  });
+}
+
+function TagSortDialog({
+  nodes,
+  orderByParent,
+  onClose,
+  onSave,
+}: {
+  nodes: TagNode[];
+  orderByParent: Record<string, string[]>;
+  onClose: () => void;
+  onSave: (orderByParent: Record<string, string[]>) => void;
+}) {
+  const [draftOrder, setDraftOrder] = useState(() => ({...orderByParent}));
+  const sensors = useSensors(
+    useSensor(PointerSensor, {activationConstraint: {distance: 5}}),
+    useSensor(KeyboardSensor, {coordinateGetter: sortableKeyboardCoordinates}),
+  );
+  const nodeByKey = useMemo(() => {
+    const result = new Map<string, TagNode>();
+    const visit = (branch: TagNode[]) => branch.forEach((node) => {
+      result.set(node.key, node);
+      visit(node.children);
+    });
+    visit(nodes);
+    return result;
+  }, [nodes]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
+
+  const handleDragEnd = ({active, over}: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const activeNode = nodeByKey.get(String(active.id));
+    const overNode = nodeByKey.get(String(over.id));
+    if (!activeNode || !overNode || activeNode.parentKey !== overNode.parentKey) return;
+    const parentKey = activeNode.parentKey;
+    const siblings = parentKey === ROOT_TAG_KEY ? nodes : nodeByKey.get(parentKey)?.children ?? [];
+    const currentOrder = orderedTagNodes(siblings, draftOrder[parentKey]).map((node) => node.key);
+    const activeIndex = currentOrder.indexOf(activeNode.key);
+    const overIndex = currentOrder.indexOf(overNode.key);
+    if (activeIndex < 0 || overIndex < 0) return;
+    setDraftOrder((current) => ({...current, [parentKey]: arrayMove(currentOrder, activeIndex, overIndex)}));
+  };
+
+  return createPortal(
+    <section
+      className="essay-tag-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="essay-tag-sort-title"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <article className="essay-tag-dialog essay-tag-sort-dialog">
+        <header>
+          <h2 id="essay-tag-sort-title">标签排序</h2>
+          <button type="button" className="essay-tag-dialog-close" title="关闭" aria-label="关闭标签排序" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="essay-tag-sort-toolbar">
+          <span>拖动手柄调整同级标签顺序</span>
+          <button type="button" onClick={() => setDraftOrder({...EMPTY_TAG_PREFERENCES.orderByParent})}>
+            <RotateCcw aria-hidden="true" />
+            恢复默认
+          </button>
+        </div>
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <div className="essay-tag-sort-list">
+            <SortableTagList nodes={nodes} orderByParent={draftOrder} />
+          </div>
+        </DndContext>
+        <footer>
+          <button type="button" className="secondary-btn" onClick={onClose}>取消</button>
+          <button type="button" className="primary-btn" onClick={() => onSave(draftOrder)}>
+            <Save aria-hidden="true" />
+            保存
+          </button>
+        </footer>
+      </article>
+    </section>,
+    document.body,
+  );
+}
+
+function orderedTagNodes(nodes: TagNode[], order: string[] = []) {
+  if (!order.length) return nodes;
+  return [...nodes].sort((left, right) => {
+    const leftIndex = order.indexOf(left.key);
+    const rightIndex = order.indexOf(right.key);
+    if (leftIndex < 0) return 1;
+    if (rightIndex < 0) return -1;
+    return leftIndex - rightIndex;
+  });
+}
+
+function SortableTagList({
+  nodes,
+  orderByParent,
+  depth = 0,
+}: {
+  nodes: TagNode[];
+  orderByParent: Record<string, string[]>;
+  depth?: number;
+}) {
+  if (!nodes.length) return null;
+  const parentKey = nodes[0].parentKey;
+  const orderedNodes = orderedTagNodes(nodes, orderByParent[parentKey]);
+  return (
+    <SortableContext items={orderedNodes.map((node) => node.key)} strategy={verticalListSortingStrategy}>
+      {orderedNodes.map((node) => (
+        <div className="essay-tag-sort-branch" key={node.key}>
+          <SortableTagRow node={node} depth={depth} />
+          <SortableTagList nodes={node.children} orderByParent={orderByParent} depth={depth + 1} />
+        </div>
+      ))}
+    </SortableContext>
+  );
+}
+
+function SortableTagRow({node, depth}: {node: TagNode; depth: number}) {
+  const {attributes, listeners, setNodeRef, transform, transition, isDragging} = useSortable({
+    id: node.key,
+    data: {parentKey: node.parentKey},
+  });
+  const style = {
+    '--essay-tag-depth': depth,
+    transform: DndCss.Transform.toString(transform),
+    transition,
+  } as CSSProperties;
+  return (
+    <div ref={setNodeRef} className={`essay-tag-sort-row ${isDragging ? 'dragging' : ''}`} style={style}>
+      <span className="essay-tag-sort-guide" aria-hidden="true" />
+      <Hash aria-hidden="true" />
+      <span>{node.name}</span>
+      <small>{node.count}</small>
+      <button type="button" title={`拖动 ${node.label}`} aria-label={`拖动 ${node.label}`} {...attributes} {...listeners}>
+        <GripVertical aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+const TAG_ICON_OPTIONS = ['', '💡', '📚', '🎯', '💼', '🧠', '❤️', '⭐', '✅', '📌'];
+
+function TagIconDialog({
+  icon,
+  label,
+  onClose,
+  onSave,
+}: {
+  icon: string;
+  label: string;
+  onClose: () => void;
+  onSave: (icon: string) => void;
+}) {
+  const [draftIcon, setDraftIcon] = useState(icon);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return createPortal(
+    <section
+      className="essay-tag-dialog-backdrop compact"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="essay-tag-icon-title"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <article className="essay-tag-dialog essay-tag-icon-dialog">
+        <header>
+          <span>
+            <small>标签图标</small>
+            <h2 id="essay-tag-icon-title">{label}</h2>
+          </span>
+          <button type="button" className="essay-tag-dialog-close" title="关闭" aria-label="关闭标签图标设置" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <div className="essay-tag-icon-options" role="group" aria-label="选择标签图标">
+          {TAG_ICON_OPTIONS.map((option) => (
+            <button
+              className={draftIcon === option ? 'active' : ''}
+              type="button"
+              title={option || '默认井号'}
+              aria-label={option || '默认井号'}
+              key={option || 'default'}
+              onClick={() => setDraftIcon(option)}
+            >
+              {option || <Hash aria-hidden="true" />}
+            </button>
+          ))}
+        </div>
+        <label className="essay-tag-custom-icon">
+          <span>自定义图标</span>
+          <input
+            value={draftIcon}
+            aria-label="自定义标签图标"
+            placeholder="输入 emoji"
+            onChange={(event) => setDraftIcon(Array.from(event.currentTarget.value).slice(0, 2).join(''))}
+          />
+        </label>
+        <footer>
+          <button type="button" className="secondary-btn" onClick={onClose}>取消</button>
+          <button type="button" className="primary-btn" onClick={() => onSave(draftIcon.trim())}>
+            <Save aria-hidden="true" />
+            保存
+          </button>
+        </footer>
+      </article>
+    </section>,
+    document.body,
   );
 }
 

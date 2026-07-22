@@ -1,5 +1,11 @@
 export function normalizeTag(value: string) {
-  return value.trim().replace(/^#+/, '').trim();
+  return value
+    .trim()
+    .replace(/^#+/, '')
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join('/');
 }
 
 export function tagKey(value: string) {
@@ -14,6 +20,17 @@ export function normalizeTags(values: string[]) {
     if (key && !tags.has(key)) tags.set(key, normalized);
   });
   return [...tags.values()];
+}
+
+export function tagAncestors(value: string) {
+  const segments = normalizeTag(value).split('/').filter(Boolean);
+  return segments.map((_, index) => segments.slice(0, index + 1).join('/'));
+}
+
+export function tagMatchesPath(value: string, path: string) {
+  const valueKey = tagKey(value);
+  const pathKey = tagKey(path);
+  return Boolean(pathKey) && (valueKey === pathKey || valueKey.startsWith(`${pathKey}/`));
 }
 
 export function stripEssayMarkdown(content: string) {
